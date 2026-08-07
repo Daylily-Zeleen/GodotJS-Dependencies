@@ -29,8 +29,6 @@ export CXX=g++-12
   --dest-cpu=x64 \
   --without-npm \
   --without-inspector \
-  --without-etw \
-  --without-dtrace \
   --without-report
 make -j"$(nproc)"
 

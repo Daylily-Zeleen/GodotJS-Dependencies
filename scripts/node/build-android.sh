@@ -58,8 +58,6 @@ export CPPFLAGS="-D__ANDROID_API__=${ANDROID_API}"
   --cross-compiling \
   --without-npm \
   --without-inspector \
-  --without-etw \
-  --without-dtrace \
   --without-report
 make -j"$(nproc)"
 

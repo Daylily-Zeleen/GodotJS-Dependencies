@@ -54,8 +54,6 @@ export STRIP="$OHOS_NATIVE_HOME/llvm/bin/llvm-strip"
   --cross-compiling \
   --without-npm \
   --without-inspector \
-  --without-etw \
-  --without-dtrace \
   --without-report
 make -j"$(nproc)"
 

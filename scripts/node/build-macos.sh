@@ -25,8 +25,6 @@ cd node
   --dest-cpu="$DEST_CPU" \
   --without-npm \
   --without-inspector \
-  --without-etw \
-  --without-dtrace \
   --without-report
 make -j"$(sysctl -n hw.ncpu || echo 4)"
 
