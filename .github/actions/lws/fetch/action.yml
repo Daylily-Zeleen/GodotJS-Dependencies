@@ -56,19 +56,25 @@ runs:
             ;;
         esac
 
-        # --- clone libwebsockets (retry: official repo is sometimes flaky) ---
+        # --- clone libwebsockets ---
+        # Try GitHub mirror first (official libwebsockets.org is often unreachable from CI),
+        # fall back to the official repo.
         cd "$GITHUB_WORKSPACE"
         if [ ! -d libwebsockets/.git ]; then
-          for i in 1 2 3; do
-            git clone https://libwebsockets.org/repo/libwebsockets && break
-            echo "clone attempt $i failed, retrying in 10s..."
-            sleep 10
+          for repo in https://github.com/warmcat/libwebsockets.git https://libwebsockets.org/repo/libwebsockets; do
+            echo "Trying $repo ..."
+            if git clone --branch v4.3-stable --depth 1 "$repo" libwebsockets; then
+              break
+            fi
+            rm -rf libwebsockets
           done
         fi
+        if [ ! -d libwebsockets/.git ]; then
+          echo "Failed to clone libwebsockets from all mirrors" >&2
+          exit 1
+        fi
         cd libwebsockets
-        git checkout v4.3-stable
-
-    - name: Fetch lws (windows)
+        git checkout v4.3-stable      - name: Fetch lws (windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
@@ -76,13 +82,13 @@ runs:
         cd $env:GITHUB_WORKSPACE
         if (-not (Test-Path "libwebsockets/.git")) {
           $ok = $false
-          for ($i = 1; $i -le 3; $i++) {
-            git clone https://libwebsockets.org/repo/libwebsockets
+          foreach ($repo in @("https://github.com/warmcat/libwebsockets.git", "https://libwebsockets.org/repo/libwebsockets")) {
+            Write-Host "Trying $repo ..."
+            git clone --branch v4.3-stable --depth 1 $repo libwebsockets
             if ($LASTEXITCODE -eq 0) { $ok = $true; break }
-            Write-Host "clone attempt $i failed, retrying in 10s..."
-            Start-Sleep -Seconds 10
+            if (Test-Path "libwebsockets") { Remove-Item -Recurse -Force libwebsockets }
           }
-          if (-not $ok) { throw "Failed to clone libwebsockets after 3 attempts" }
+          if (-not $ok) { throw "Failed to clone libwebsockets from all mirrors" }
         }
         cd libwebsockets
         git checkout v4.3-stable
