@@ -13,7 +13,7 @@ on:
         required: true
         default: "v24.x"
       platforms:
-        description: 'comma-separated platforms to build, empty = all (linux,macos,windows,android,ios,ohos)'
+        description: 'comma-separated platforms or platform-arch combos to build, empty = all (linux,linux-x86_64,macos,windows,android,ios,ohos)'
         type: string
         required: false
         default: ''
@@ -67,13 +67,27 @@ jobs:
             {"platform": "ohos", "arch": "arm64", "runner": "ubuntu-22.04", "staging": "ohos_arm64_release", "artifact": "prebuilt_node_ohos_arm64"},
           ]
 
+          # Parse platforms: entries can be "platform" (all arches) or "platform-arch" (e.g. linux-x86_64)
           want = None
+          want_arch = {}
           if platforms and platforms != 'all':
-              want = {p.strip() for p in platforms.split(',') if p.strip()}
+              want = set()
+              for p in platforms.split(','):
+                  p = p.strip()
+                  if not p:
+                      continue
+                  if '-' in p:
+                      plat, _, arch = p.partition('-')
+                      want.add(plat)
+                      want_arch.setdefault(plat, set()).add(arch)
+                  else:
+                      want.add(p)
 
           selected = []
           for c in combos:
               if want is not None and c['platform'] not in want:
+                  continue
+              if want_arch and c['platform'] in want_arch and c['arch'] not in want_arch[c['platform']]:
                   continue
               if skip_apple and c['platform'] in ('macos', 'ios'):
                   continue
@@ -121,19 +135,19 @@ jobs:
           key: android-ndk-r23c-${{ runner.os }}-v23c
 
       - name: Fetch node (${{ matrix.platform }} ${{ matrix.arch }})
-        uses: ./.github/actions/node/fetch
+        uses: ./Scripts/.github/actions/node/fetch
         with:
           node_version: ${{ env.NODE_VERSION }}
           platform: ${{ matrix.platform }}
 
       - name: Build node (${{ matrix.platform }} ${{ matrix.arch }})
-        uses: ./.github/actions/node/build
+        uses: ./Scripts/.github/actions/node/build
         with:
           node_version: ${{ env.NODE_VERSION }}
           platform: ${{ matrix.platform }}
           arch: ${{ matrix.arch }}
 
       - name: Upload
-        uses: ./.github/actions/upload
+        uses: ./Scripts/.github/actions/upload
         with:
           artifact_name: ${{ matrix.artifact }}

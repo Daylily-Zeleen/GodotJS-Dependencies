@@ -13,7 +13,7 @@ on:
         required: true
         default: "13.5.119"
       platforms:
-        description: 'comma-separated platforms to build, empty = all (linux,macos,windows,android,ios)'
+        description: 'comma-separated platforms or platform-arch combos to build, empty = all (linux,linux-x86_64,macos,windows,android,ios)'
         type: string
         required: false
         default: ''
@@ -67,13 +67,27 @@ jobs:
             {"platform": "ios", "arch": "x86_64", "runner": "macos-latest", "target": "x64.release", "staging": "ios.x86_64.release", "artifact": "prebuilt_v8_ios_x86_64"},
           ]
 
+          # Parse platforms: entries can be "platform" (all arches) or "platform-arch" (e.g. linux-x86_64)
           want = None
+          want_arch = {}
           if platforms and platforms != 'all':
-              want = {p.strip() for p in platforms.split(',') if p.strip()}
+              want = set()
+              for p in platforms.split(','):
+                  p = p.strip()
+                  if not p:
+                      continue
+                  if '-' in p:
+                      plat, _, arch = p.partition('-')
+                      want.add(plat)
+                      want_arch.setdefault(plat, set()).add(arch)
+                  else:
+                      want.add(p)
 
           selected = []
           for c in combos:
               if want is not None and c['platform'] not in want:
+                  continue
+              if want_arch and c['platform'] in want_arch and c['arch'] not in want_arch[c['platform']]:
                   continue
               if skip_apple and c['platform'] in ('macos', 'ios'):
                   continue
@@ -120,14 +134,14 @@ jobs:
             depot_tools-${{ runner.os }}-
 
       - name: Fetch v8 (${{ matrix.platform }} ${{ matrix.arch }})
-        uses: ./.github/actions/v8/fetch
+        uses: ./Scripts/.github/actions/v8/fetch
         with:
           v8_version: ${{ env.V8_VERSION }}
           platform: ${{ matrix.platform }}
           arch: ${{ matrix.arch }}
 
       - name: Build v8 (${{ matrix.platform }} ${{ matrix.arch }})
-        uses: ./.github/actions/v8/build
+        uses: ./Scripts/.github/actions/v8/build
         with:
           v8_version: ${{ env.V8_VERSION }}
           platform: ${{ matrix.platform }}
@@ -136,6 +150,6 @@ jobs:
           staging_dir: ${{ matrix.staging }}
 
       - name: Upload
-        uses: ./.github/actions/upload
+        uses: ./Scripts/.github/actions/upload
         with:
           artifact_name: ${{ matrix.artifact }}

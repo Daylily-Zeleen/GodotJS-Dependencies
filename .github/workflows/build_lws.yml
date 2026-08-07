@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       platforms:
-        description: 'comma-separated platforms to build, empty = all (linux,macos,windows,android,ios)'
+        description: 'comma-separated platforms or platform-arch combos to build, empty = all (linux,linux-x86_64,macos,windows,android,ios)'
         type: string
         required: false
         default: ''
@@ -54,13 +54,27 @@ jobs:
             {"platform": "ios", "arch": "arm64", "runner": "macos-latest", "staging": "ios_arm64_release", "artifact": "prebuilt_lws_ios_arm64"},
           ]
 
+          # Parse platforms: entries can be "platform" (all arches) or "platform-arch" (e.g. linux-x86_64)
           want = None
+          want_arch = {}
           if platforms and platforms != 'all':
-              want = {p.strip() for p in platforms.split(',') if p.strip()}
+              want = set()
+              for p in platforms.split(','):
+                  p = p.strip()
+                  if not p:
+                      continue
+                  if '-' in p:
+                      plat, _, arch = p.partition('-')
+                      want.add(plat)
+                      want_arch.setdefault(plat, set()).add(arch)
+                  else:
+                      want.add(p)
 
           selected = []
           for c in combos:
               if want is not None and c['platform'] not in want:
+                  continue
+              if want_arch and c['platform'] in want_arch and c['arch'] not in want_arch[c['platform']]:
                   continue
               if skip_apple and c['platform'] in ('macos', 'ios'):
                   continue
@@ -104,19 +118,19 @@ jobs:
           key: android-ndk-r23c-${{ runner.os }}-v23c
 
       - name: Fetch lws (${{ matrix.platform }} ${{ matrix.arch }})
-        uses: ./.github/actions/lws/fetch
+        uses: ./Scripts/.github/actions/lws/fetch
         with:
           platform: ${{ matrix.platform }}
           arch: ${{ matrix.arch }}
 
       - name: Build lws (${{ matrix.platform }} ${{ matrix.arch }})
-        uses: ./.github/actions/lws/build
+        uses: ./Scripts/.github/actions/lws/build
         with:
           platform: ${{ matrix.platform }}
           arch: ${{ matrix.arch }}
           staging_dir: ${{ matrix.staging }}
 
       - name: Upload
-        uses: ./.github/actions/upload
+        uses: ./Scripts/.github/actions/upload
         with:
           artifact_name: ${{ matrix.artifact }}
