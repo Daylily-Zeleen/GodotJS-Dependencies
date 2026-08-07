@@ -27,7 +27,6 @@ cd node
   --without-inspector \
   --without-etw \
   --without-dtrace \
-  --without-perfctr \
   --without-report
 make -j"$(sysctl -n hw.ncpu || echo 4)"
 

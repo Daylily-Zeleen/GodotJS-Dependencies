@@ -33,7 +33,6 @@ export LDFLAGS="-isysroot ${SDK_PATH} -arch arm64"
   --without-inspector \
   --without-etw \
   --without-dtrace \
-  --without-perfctr \
   --without-report
 make -j"$(sysctl -n hw.ncpu || echo 4)"
 

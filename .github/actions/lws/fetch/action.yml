@@ -56,18 +56,31 @@ runs:
             ;;
         esac
 
-        # --- clone libwebsockets ---
+        # --- clone libwebsockets (retry: official repo is sometimes flaky) ---
         cd "$GITHUB_WORKSPACE"
-        git clone https://libwebsockets.org/repo/libwebsockets
+        if [ ! -d libwebsockets/.git ]; then
+          for i in 1 2 3; do
+            git clone https://libwebsockets.org/repo/libwebsockets && break
+            echo "clone attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
+        fi
         cd libwebsockets
-        git checkout v4.3-stable
-
-    - name: Fetch lws (windows)
+        git checkout v4.3-stable      - name: Fetch lws (windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
         Set-StrictMode -Version Latest
         cd $env:GITHUB_WORKSPACE
-        git clone https://libwebsockets.org/repo/libwebsockets
+        if (-not (Test-Path "libwebsockets/.git")) {
+          $ok = $false
+          for ($i = 1; $i -le 3; $i++) {
+            git clone https://libwebsockets.org/repo/libwebsockets
+            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+            Write-Host "clone attempt $i failed, retrying in 10s..."
+            Start-Sleep -Seconds 10
+          }
+          if (-not $ok) { throw "Failed to clone libwebsockets after 3 attempts" }
+        }
         cd libwebsockets
         git checkout v4.3-stable

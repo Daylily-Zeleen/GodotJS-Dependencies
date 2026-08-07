@@ -56,7 +56,6 @@ export STRIP="$OHOS_NATIVE_HOME/llvm/bin/llvm-strip"
   --without-inspector \
   --without-etw \
   --without-dtrace \
-  --without-perfctr \
   --without-report
 make -j"$(nproc)"
 

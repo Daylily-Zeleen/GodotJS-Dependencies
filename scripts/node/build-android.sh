@@ -60,7 +60,6 @@ export CPPFLAGS="-D__ANDROID_API__=${ANDROID_API}"
   --without-inspector \
   --without-etw \
   --without-dtrace \
-  --without-perfctr \
   --without-report
 make -j"$(nproc)"
 

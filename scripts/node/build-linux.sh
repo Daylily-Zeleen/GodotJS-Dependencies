@@ -31,7 +31,6 @@ export CXX=g++-12
   --without-inspector \
   --without-etw \
   --without-dtrace \
-  --without-perfctr \
   --without-report
 make -j"$(nproc)"
 
