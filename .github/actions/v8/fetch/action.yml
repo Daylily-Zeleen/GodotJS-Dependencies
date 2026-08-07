@@ -1,0 +1,98 @@
+name: Fetch V8
+description: Fetch V8 source (depot_tools + fetch + checkout tag + gclient sync), cross-platform.
+inputs:
+  v8_version:
+    description: 'V8 version tag to build (e.g. 13.5.119)'
+    required: true
+  platform:
+    description: 'Target platform: linux | macos | windows | android | ios'
+    required: true
+  arch:
+    description: 'Target arch: x86_64 | arm64 | arm32 (gn arch for windows: x64 | arm64)'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch v8 (unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # --- Install build dependencies (linux / android only) ---
+        if [ "${{ inputs.platform }}" = "linux" ] || [ "${{ inputs.platform }}" = "android" ]; then
+          sudo apt-get clean || true
+          sudo rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* || true
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ninja-build generate-ninja pkg-config zip unzip ca-certificates
+        fi
+
+        cd "$GITHUB_WORKSPACE"
+
+        # --- Android: fetch NDK r23c and append config to args.gn ---
+        if [ "${{ inputs.platform }}" = "android" ]; then
+          if [ ! -d "$GITHUB_WORKSPACE/android-ndk-r23c" ]; then
+            wget -O android-ndk.zip -q https://dl.google.com/android/repository/android-ndk-r23c-linux.zip
+            unzip -q android-ndk.zip
+          fi
+          echo "default_android_ndk_root = \"$GITHUB_WORKSPACE/android-ndk-r23c\"" >> "$GITHUB_WORKSPACE/Scripts/config/v8/v8.android_${{ inputs.arch }}.args.gn"
+          echo "default_android_ndk_version = \"r23c\"" >> "$GITHUB_WORKSPACE/Scripts/config/v8/v8.android_${{ inputs.arch }}.args.gn"
+          cat "$GITHUB_WORKSPACE/Scripts/config/v8/v8.android_${{ inputs.arch }}.args.gn"
+        fi
+
+        # --- depot_tools ---
+        if [ ! -d "$GITHUB_WORKSPACE/depot_tools" ]; then
+          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+        fi
+        export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
+        cd "$GITHUB_WORKSPACE/depot_tools"
+        gclient
+
+        # --- fetch v8 ---
+        mkdir -p "$GITHUB_WORKSPACE/v8"
+        cd "$GITHUB_WORKSPACE/v8"
+        fetch --nohooks --nohistory v8
+
+        # --- target_os for cross builds ---
+        if [ "${{ inputs.platform }}" = "android" ]; then
+          echo "target_os = ['android']" >> .gclient
+        elif [ "${{ inputs.platform }}" = "ios" ]; then
+          echo "target_os = ['ios']" >> .gclient
+        fi
+        cat .gclient
+
+        # --- checkout requested version + sync ---
+        cd v8
+        git fetch origin refs/tags/${{ inputs.v8_version }}
+        git checkout FETCH_HEAD
+        gclient sync -D --force --reset
+
+    - name: Fetch v8 (windows)
+      if: runner.os == 'Windows'
+      shell: cmd
+      run: |
+        cd %GITHUB_WORKSPACE%
+
+        git config --global core.autocrlf false
+        git config --global core.filemode false
+        git config --global branch.autosetuprebase always
+        git config --global core.longpaths true
+
+        curl https://storage.googleapis.com/chrome-infra/depot_tools.zip --output ./depot_tools.zip
+        7z x -odepot_tools depot_tools.zip
+        set PATH=%GITHUB_WORKSPACE%\depot_tools;%PATH%
+        set DEPOT_TOOLS_WIN_TOOLCHAIN=0
+
+        cd depot_tools
+        call gclient
+
+        cd ..
+        mkdir v8
+        cd v8
+        call fetch --nohooks --nohistory v8
+        cd v8
+        call git fetch origin refs/tags/${{ inputs.v8_version }}
+        call git checkout FETCH_HEAD
+        call gclient sync -D --force --reset

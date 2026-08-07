@@ -1,0 +1,73 @@
+name: Fetch LWS
+description: Fetch libwebsockets (v4.3-stable) + install platform build deps, cross-platform.
+inputs:
+  platform:
+    description: 'Target platform: linux | macos | windows | android | ios'
+    required: true
+  arch:
+    description: 'Target arch: x86_64 | arm64 | arm32'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch lws (unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        SUDO=""
+        if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; fi
+
+        # --- platform build deps ---
+        case "${{ inputs.platform }}" in
+          linux)
+            $SUDO apt-get clean || true
+            $SUDO rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* || true
+            $SUDO DEBIAN_FRONTEND=noninteractive apt-get update
+            if [ "${{ inputs.arch }}" = "x86_64" ]; then
+              $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git cmake build-essential ca-certificates
+            else
+              $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git cmake ca-certificates gcc-aarch64-linux-gnu g++-aarch64-linux-gnu make
+            fi
+            ;;
+          android)
+            $SUDO apt-get clean || true
+            $SUDO rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* || true
+            $SUDO DEBIAN_FRONTEND=noninteractive apt-get update
+            $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git cmake unzip zip ca-certificates
+            cd "$GITHUB_WORKSPACE"
+            if [ ! -d "$GITHUB_WORKSPACE/android-ndk-r23c" ]; then
+              wget -O android-ndk.zip -q https://dl.google.com/android/repository/android-ndk-r23c-linux.zip
+              unzip -q android-ndk.zip
+            fi
+            ;;
+          macos|ios)
+            if ! command -v cmake >/dev/null 2>&1; then
+              if command -v brew >/dev/null 2>&1; then
+                brew update || true
+                brew install cmake || true
+              fi
+            fi
+            if ! command -v cmake >/dev/null 2>&1; then
+              /usr/bin/python3 -m pip install --user cmake
+              echo "PATH=$HOME/Library/Python/3.12/bin:$HOME/.local/bin:$PATH" >> "$GITHUB_ENV"
+            fi
+            ;;
+        esac
+
+        # --- clone libwebsockets ---
+        cd "$GITHUB_WORKSPACE"
+        git clone https://libwebsockets.org/repo/libwebsockets
+        cd libwebsockets
+        git checkout v4.3-stable
+
+    - name: Fetch lws (windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Set-StrictMode -Version Latest
+        cd $env:GITHUB_WORKSPACE
+        git clone https://libwebsockets.org/repo/libwebsockets
+        cd libwebsockets
+        git checkout v4.3-stable

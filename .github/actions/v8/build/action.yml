@@ -1,0 +1,85 @@
+name: Build V8
+description: Build V8 monolith (v8gen + args.gn + ninja) for a given platform/arch and stage artifact.
+inputs:
+  v8_version:
+    description: 'V8 version tag (used for staging dir naming)'
+    required: true
+  platform:
+    description: 'Target platform: linux | macos | windows | android | ios'
+    required: true
+  arch:
+    description: 'Target arch: x86_64 | arm64 | arm32 (gn arch for windows: x64 | arm64)'
+    required: true
+  target:
+    description: 'v8gen target dir, e.g. x64.release | arm64.release | arm.release'
+    required: true
+  staging_dir:
+    description: 'Staging subdir under staging/v8/, e.g. linux.x86_64.release'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Build v8 (unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
+        cd "$GITHUB_WORKSPACE/v8/v8"
+
+        # --- install build deps (linux / android) ---
+        if [ "${{ inputs.platform }}" = "linux" ] || [ "${{ inputs.platform }}" = "android" ]; then
+          if [ "${{ inputs.platform }}" = "android" ]; then
+            sh ./build/install-build-deps.sh --android
+          else
+            sh ./build/install-build-deps.sh
+          fi
+          sudo apt-get clean || true
+          sudo rm -rf /var/lib/apt/lists/* || true
+        fi
+
+        # --- sysroot for cross arch ---
+        if [ "${{ inputs.platform }}" = "android" ]; then
+          case "${{ inputs.arch }}" in
+            arm64) SYSROOT_ARCH=arm64 ;;
+            arm32) SYSROOT_ARCH=arm ;;
+            x86_64) SYSROOT_ARCH=x64 ;;
+          esac
+          python ./build/linux/sysroot_scripts/install-sysroot.py --arch=${SYSROOT_ARCH}
+        elif [ "${{ inputs.platform }}" = "linux" ] && [ "${{ inputs.arch }}" = "arm64" ]; then
+          python ./build/linux/sysroot_scripts/install-sysroot.py --arch=arm64
+        fi
+
+        # --- generate + configure + build ---
+        python ./tools/dev/v8gen.py ${{ inputs.target }}
+        cp "$GITHUB_WORKSPACE/Scripts/config/v8/v8.${{ inputs.platform }}_${{ inputs.arch }}.args.gn" "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/args.gn"
+        cat "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/args.gn"
+        ls -l "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/"
+        ninja -C "./out.gn/${{ inputs.target }}" v8_monolith
+
+        # --- stage artifact ---
+        cd "$GITHUB_WORKSPACE"
+        mkdir -p "staging/v8/${{ inputs.staging_dir }}"
+        cp "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/obj/libv8_monolith.a" "staging/v8/${{ inputs.staging_dir }}/"
+
+    - name: Build v8 (windows)
+      if: runner.os == 'Windows'
+      shell: cmd
+      run: |
+        set PATH=%GITHUB_WORKSPACE%\depot_tools;%PATH%
+        set DEPOT_TOOLS_WIN_TOOLCHAIN=0
+        cd %GITHUB_WORKSPACE%\v8\v8
+
+        rem windows: v8gen.py is unreliable, use gn gen directly with inline args
+        call gn gen .\out.gn\${{ inputs.target }} -args="is_component_build=false is_debug=false target_cpu=""${{ inputs.arch }}"" target_os=""win"" v8_enable_i18n_support=false v8_monolithic=true v8_use_external_startup_data=false v8_enable_pointer_compression=true v8_jitless=false use_custom_libcxx=false treat_warnings_as_errors=false v8_symbol_level=0 v8_enable_sandbox=false"
+        dir .\out.gn\${{ inputs.target }}
+        more .\out.gn\${{ inputs.target }}\args.gn
+        call ninja -C .\out.gn\${{ inputs.target }} v8_monolith
+        dir %GITHUB_WORKSPACE%\v8\v8\out.gn\${{ inputs.target }}\obj\*.lib
+
+        cd %GITHUB_WORKSPACE%
+        mkdir staging\v8\include
+        mkdir staging\v8\${{ inputs.staging_dir }}
+        xcopy %GITHUB_WORKSPACE%\v8\v8\include staging\v8\include\ /Q /R /S /F /Y
+        copy %GITHUB_WORKSPACE%\v8\v8\out.gn\${{ inputs.target }}\obj\v8_monolith.lib staging\v8\${{ inputs.staging_dir }}\v8_monolith.lib /Y /B

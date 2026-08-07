@@ -1,0 +1,42 @@
+name: Fetch Node
+description: Fetch Node.js source (official nodejs/node) at the requested branch/tag.
+inputs:
+  node_version:
+    description: 'Node.js branch/tag to build (e.g. v24.x)'
+    required: true
+  platform:
+    description: 'Target platform: linux | macos | windows | android | ios | ohos'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch node (unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$GITHUB_WORKSPACE"
+        if [ ! -d node/.git ]; then
+          git clone --depth 1 --branch "${{ inputs.node_version }}" https://github.com/nodejs/node.git
+        else
+          cd node
+          git fetch --depth 1 origin "${{ inputs.node_version }}" || git fetch --depth 1 origin tag "${{ inputs.node_version }}" || true
+          git checkout "${{ inputs.node_version }}" || true
+          cd "$GITHUB_WORKSPACE"
+        fi
+        cd node
+        git checkout "${{ inputs.node_version }}" 2>/dev/null || git checkout -B build FETCH_HEAD 2>/dev/null || true
+        git log -1 --oneline || true
+
+    - name: Fetch node (windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Set-StrictMode -Version Latest
+        cd $env:GITHUB_WORKSPACE
+        if (-not (Test-Path "node/.git")) {
+          git clone --depth 1 --branch "${{ inputs.node_version }}" https://github.com/nodejs/node.git
+        }
+        cd node
+        git checkout "${{ inputs.node_version }}"

@@ -1,0 +1,47 @@
+name: Build Node
+description: Build node (Node.js as an embeddable static library) using scripts/node/build-* scripts.
+inputs:
+  node_version:
+    description: 'Node.js branch/tag to build (e.g. v24.x)'
+    required: true
+  platform:
+    description: 'Target platform: linux | macos | windows | android | ios | ohos'
+    required: true
+  arch:
+    description: 'Target arch: x86_64 | arm64 | arm32'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Build node (unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        case "${{ inputs.platform }}" in
+          linux)
+            bash "$GITHUB_WORKSPACE/Scripts/scripts/node/build-linux.sh" "${{ inputs.node_version }}" "${{ inputs.arch }}"
+            ;;
+          macos)
+            bash "$GITHUB_WORKSPACE/Scripts/scripts/node/build-macos.sh" "${{ inputs.node_version }}" "${{ inputs.arch }}"
+            ;;
+          ios)
+            bash "$GITHUB_WORKSPACE/Scripts/scripts/node/build-ios.sh" "${{ inputs.node_version }}"
+            ;;
+          android)
+            bash "$GITHUB_WORKSPACE/Scripts/scripts/node/build-android.sh" "${{ inputs.node_version }}" "${{ inputs.arch }}"
+            ;;
+          ohos)
+            bash "$GITHUB_WORKSPACE/Scripts/scripts/node/build-ohos.sh" "${{ inputs.node_version }}"
+            ;;
+        esac
+
+    - name: Build node (windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Set-StrictMode -Version Latest
+        & "$env:GITHUB_WORKSPACE\Scripts\scripts\node\build-windows.ps1" `
+          -Branch "${{ inputs.node_version }}" `
+          -DestCpu "${{ inputs.arch }}"

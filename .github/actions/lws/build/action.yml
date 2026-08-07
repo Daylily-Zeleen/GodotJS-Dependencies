@@ -1,0 +1,102 @@
+name: Build LWS
+description: Build libwebsockets static library for a given platform/arch and stage artifact.
+inputs:
+  platform:
+    description: 'Target platform: linux | macos | windows | android | ios'
+    required: true
+  arch:
+    description: 'Target arch: x86_64 | arm64 | arm32'
+    required: true
+  staging_dir:
+    description: 'Staging subdir under staging/lws/, e.g. linux_x86_64_release'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Build lws (unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$GITHUB_WORKSPACE/libwebsockets"
+        mkdir -p out && cd out
+
+        case "${{ inputs.platform }}" in
+          linux)
+            if [ "${{ inputs.arch }}" = "arm64" ]; then
+              export CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++
+              cmake -DBUILD_SHARED_LIBS=OFF -DLWS_WITH_SSL=0 -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+                -DCMAKE_C_COMPILER=${CC} -DCMAKE_CXX_COMPILER=${CXX} ..
+            else
+              # x86_64: native build, no cross compiler
+              cmake -DBUILD_SHARED_LIBS=OFF -DLWS_WITH_SSL=0 -DCMAKE_BUILD_TYPE=Release ..
+            fi
+            cmake --build . --config Release -j$(nproc)
+            ;;
+          android)
+            export ANDROID_NDK="$GITHUB_WORKSPACE/android-ndk-r23c"
+            case "${{ inputs.arch }}" in
+              arm64) ABI=arm64-v8a; API=21 ;;
+              arm32) ABI=armeabi-v7a; API=19 ;;
+              x86_64) ABI=x86_64; API=21 ;;
+            esac
+            cmake -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
+              -DANDROID_ABI=${ABI} -DANDROID_PLATFORM=${API} \
+              -DBUILD_SHARED_LIBS=OFF -DLWS_WITH_SSL=0 -DCMAKE_BUILD_TYPE=Release ..
+            cmake --build . --config Release -j$(nproc)
+            ;;
+          ios)
+            export SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
+            echo "Using iOS Device SDK: ${SDK_PATH}"
+            cmake -G "Unix Makefiles" -DBUILD_SHARED_LIBS=OFF -DLWS_WITH_SHARED=OFF -DLWS_WITH_STATIC=ON \
+              -DLWS_WITH_SSL=0 -DLWS_WITH_ZLIB=0 -DLWS_WITH_TESTAPPS=OFF -DLWS_WITH_MINIMAL_EXAMPLES=OFF \
+              -DLWS_WITHOUT_TESTAPPS=ON -DLWS_INSTALL_EXAMPLES=OFF -DINSTALL_LWS_TESTAPPS=OFF \
+              -DBUILD_TESTING=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="${SDK_PATH}" \
+              -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 ..
+            cmake --build . --config Release -j$(sysctl -n hw.ncpu || echo 4)
+            ;;
+          macos)
+            cmake -DBUILD_SHARED_LIBS=OFF -DLWS_WITH_SHARED=OFF -DLWS_WITH_STATIC=ON \
+              -DLWS_WITH_SSL=0 -DLWS_WITH_TESTAPPS=OFF -DLWS_WITH_MINIMAL_EXAMPLES=OFF \
+              -DLWS_WITHOUT_TESTAPPS=ON -DLWS_INSTALL_EXAMPLES=OFF -DINSTALL_LWS_TESTAPPS=OFF \
+              -DBUILD_TESTING=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_OSX_ARCHITECTURES=${{ inputs.arch }} ..
+            cmake --build . --config Release -- -j2
+            ;;
+        esac
+
+        # --- stage artifacts ---
+        cd "$GITHUB_WORKSPACE"
+        mkdir -p "staging/lws/${{ inputs.staging_dir }}"
+        cp -a libwebsockets/out/include "staging/lws/${{ inputs.staging_dir }}/"
+        LWS_LIB_PATH="$(cd libwebsockets && find out -name 'libwebsockets.a' -print -quit)"
+        if [ -z "$LWS_LIB_PATH" ]; then
+          echo "libwebsockets.a not found" >&2
+          exit 1
+        fi
+        cp "libwebsockets/${LWS_LIB_PATH}" "staging/lws/${{ inputs.staging_dir }}/"
+
+    - name: Build lws (windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Set-StrictMode -Version Latest
+        cd "$env:GITHUB_WORKSPACE/libwebsockets"
+        New-Item -ItemType Directory -Force -Path out | Out-Null
+        cd out
+        cmake -G "Visual Studio 17 2022" -A x64 `
+          -DLWS_WITH_SHARED=OFF `
+          -DLWS_WITH_SSL=0 `
+          -DCMAKE_C_FLAGS_RELEASE="/MT /O2 /Ob2 /DNDEBUG" `
+          ..
+        cmake --build . --config Release -- /m
+
+        cd "$env:GITHUB_WORKSPACE"
+        New-Item -ItemType Directory -Force -Path "staging/lws/${{ inputs.staging_dir }}" | Out-Null
+        Copy-Item -Recurse libwebsockets/out/include "staging/lws/${{ inputs.staging_dir }}/"
+        $lib = Get-ChildItem -Path libwebsockets -Recurse -Filter "*websockets*.lib" | Where-Object { $_.FullName -match "Release" } | Select-Object -First 1
+        if (-not $lib) { $lib = Get-ChildItem -Path libwebsockets -Recurse -Filter "*websockets*.lib" | Select-Object -First 1 }
+        Copy-Item $lib.FullName "staging/lws/${{ inputs.staging_dir }}/"

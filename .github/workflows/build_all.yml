@@ -16,117 +16,40 @@ on:
           - "12.4.254.21" # 2019
         required: true
         default: "13.5.119"
+      node_version:
+        description: 'node.js branch/tag to build'
+        type: choice
+        options:
+          - "v24.x"
+          - "v23.x"
+          - "v22.x"
+        required: true
+        default: "v24.x"
+      platforms:
+        description: 'comma-separated platforms to build, empty = all (linux,macos,windows,android,ios[,ohos])'
+        type: string
+        required: false
+        default: ''
 
 jobs:
-  v8_android_arm64:
-    uses: ./.github/workflows/build_v8_android_arm64.yml
+  v8:
+    uses: ./.github/workflows/build_v8.yml
     with:
       v8_version: ${{ inputs.v8_version }}
+      platforms: ${{ inputs.platforms }}
     secrets: inherit
 
-  v8_android_arm32:
-    uses: ./.github/workflows/build_v8_android_arm32.yml
+  lws:
+    uses: ./.github/workflows/build_lws.yml
     with:
-      v8_version: ${{ inputs.v8_version }}
+      platforms: ${{ inputs.platforms }}
     secrets: inherit
 
-  v8_android_x86_64:
-    uses: ./.github/workflows/build_v8_android_x86_64.yml
+  node:
+    uses: ./.github/workflows/build_node.yml
     with:
-      v8_version: ${{ inputs.v8_version }}
-    secrets: inherit
-
-  v8_ios_arm64:
-    if: ${{ vars.SKIP_APPLE != 'true' }}
-    uses: ./.github/workflows/build_v8_ios_arm64.yml
-    with:
-      v8_version: ${{ inputs.v8_version }}
-    secrets: inherit
-
-  v8_macos_arm64:
-    if: ${{ vars.SKIP_APPLE != 'true' }}
-    uses: ./.github/workflows/build_v8_macos_arm64.yml
-    with:
-      v8_version: ${{ inputs.v8_version }}
-    secrets: inherit
-
-  v8_macos_x86_64:
-    if: ${{ vars.SKIP_APPLE != 'true' }}
-    uses: ./.github/workflows/build_v8_macos_x86_64.yml
-    with:
-      v8_version: ${{ inputs.v8_version }}
-    secrets: inherit
-
-  v8_linux_x86_64:
-    uses: ./.github/workflows/build_v8_linux_x86_64.yml
-    with:
-      v8_version: ${{ inputs.v8_version }}
-    secrets: inherit
-
-  v8_linux_arm64:
-    uses: ./.github/workflows/build_v8_linux_arm64.yml
-    with:
-      v8_version: ${{ inputs.v8_version }}
-    secrets: inherit
-
-  v8_windows_x86_64:
-    if: ${{ vars.SKIP_WINDOWS != 'true' }}
-    uses: ./.github/workflows/build_v8_windows_x86_64.yml
-    with:
-      v8_version: ${{ inputs.v8_version }}
-    secrets: inherit
-
-  v8_windows_arm64:
-    if: ${{ vars.SKIP_WINDOWS != 'true' }}
-    uses: ./.github/workflows/build_v8_windows_arm64.yml
-    with:
-      v8_version: ${{ inputs.v8_version }}
-    secrets: inherit
-
-  lws_linux_x86_64:
-    uses: ./.github/workflows/build_lws_linux_x86_64.yml
-    secrets: inherit
-
-  lws_linux_arm64:
-    uses: ./.github/workflows/build_lws_linux_arm64.yml
-    secrets: inherit
-
-  # Android LWS builds (use NDK r23c toolchain)
-  lws_android_arm64:
-    uses: ./.github/workflows/build_lws_android_arm64.yml
-    secrets: inherit
-
-  lws_android_arm32:
-    uses: ./.github/workflows/build_lws_android_arm32.yml
-    secrets: inherit
-
-  lws_android_x86_64:
-    uses: ./.github/workflows/build_lws_android_x86_64.yml
-    secrets: inherit
-
-  lws_ios_arm64:
-    if: ${{ vars.SKIP_APPLE != 'true' }}
-    uses: ./.github/workflows/build_lws_ios_arm64.yml
-    secrets: inherit
-
-  lws_macos_arm64:
-    if: ${{ vars.SKIP_APPLE != 'true' }}
-    uses: ./.github/workflows/build_lws_macos_arm64.yml
-    secrets: inherit
-
-  lws_macos_x86_64:
-    if: ${{ vars.SKIP_APPLE != 'true' }}
-    uses: ./.github/workflows/build_lws_macos_x86_64.yml
-    secrets: inherit
-
-  lws_windows_x86_64:
-    if: ${{ vars.SKIP_WINDOWS != 'true' }}
-    uses: ./.github/workflows/build_lws_windows_x86_64.yml
-    secrets: inherit
-
-  lws_windows_arm64:
-    if: ${{ vars.SKIP_WINDOWS != 'true' }}
-    uses: ./.github/workflows/build_lws_windows_arm64.yml
+      node_version: ${{ inputs.node_version }}
+      platforms: ${{ inputs.platforms }}
     secrets: inherit
 
   publish:
@@ -134,50 +57,10 @@ jobs:
     permissions:
       contents: write
     needs:
-      - v8_android_arm32
-      - v8_android_arm64
-      - v8_android_x86_64
-      - v8_ios_arm64
-      - v8_macos_arm64
-      - v8_macos_x86_64
-      - v8_linux_arm64
-      - v8_linux_x86_64
-      - v8_windows_arm64
-      - v8_windows_x86_64
-      - lws_linux_x86_64
-      - lws_linux_arm64
-      - lws_android_arm64
-      - lws_android_arm32
-      - lws_android_x86_64
-      - lws_ios_arm64
-      - lws_macos_arm64
-      - lws_macos_x86_64
-      - lws_windows_arm64
-      - lws_windows_x86_64
-    if: >-
-      ${{
-        always() &&
-        (needs.v8_android_arm32.result == 'success' || needs.v8_android_arm32.result == 'skipped') &&
-        (needs.v8_android_arm64.result == 'success' || needs.v8_android_arm64.result == 'skipped') &&
-        (needs.v8_android_x86_64.result == 'success' || needs.v8_android_x86_64.result == 'skipped') &&
-        (needs.v8_ios_arm64.result == 'success' || needs.v8_ios_arm64.result == 'skipped') &&
-        (needs.v8_macos_arm64.result == 'success' || needs.v8_macos_arm64.result == 'skipped') &&
-        (needs.v8_macos_x86_64.result == 'success' || needs.v8_macos_x86_64.result == 'skipped') &&
-        (needs.v8_linux_arm64.result == 'success' || needs.v8_linux_arm64.result == 'skipped') &&
-        (needs.v8_linux_x86_64.result == 'success' || needs.v8_linux_x86_64.result == 'skipped') &&
-        (needs.v8_windows_arm64.result == 'success' || needs.v8_windows_arm64.result == 'skipped') &&
-        (needs.v8_windows_x86_64.result == 'success' || needs.v8_windows_x86_64.result == 'skipped') &&
-        (needs.lws_linux_x86_64.result == 'success' || needs.lws_linux_x86_64.result == 'skipped') &&
-        (needs.lws_linux_arm64.result == 'success' || needs.lws_linux_arm64.result == 'skipped') &&
-        (needs.lws_android_arm64.result == 'success' || needs.lws_android_arm64.result == 'skipped') &&
-        (needs.lws_android_arm32.result == 'success' || needs.lws_android_arm32.result == 'skipped') &&
-        (needs.lws_android_x86_64.result == 'success' || needs.lws_android_x86_64.result == 'skipped') &&
-        (needs.lws_ios_arm64.result == 'success' || needs.lws_ios_arm64.result == 'skipped') &&
-        (needs.lws_macos_arm64.result == 'success' || needs.lws_macos_arm64.result == 'skipped') &&
-        (needs.lws_macos_x86_64.result == 'success' || needs.lws_macos_x86_64.result == 'skipped') &&
-        (needs.lws_windows_arm64.result == 'success' || needs.lws_windows_arm64.result == 'skipped') &&
-        (needs.lws_windows_x86_64.result == 'success' || needs.lws_windows_x86_64.result == 'skipped')
-      }}
+      - v8
+      - lws
+      - node
+    if: ${{ always() && (needs.v8.result == 'success') && (needs.lws.result == 'success') && (needs.node.result == 'success') }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -192,11 +75,26 @@ jobs:
           echo "Downloaded artifacts layout:"
           ls -R staging || true
 
-          (cd staging && zip -r "v8_${{ github.event.inputs.v8_version }}.zip" v8/)
-          echo "Created V8 bundle: staging/v8_${{ github.event.inputs.v8_version }}.zip"
+          if [ -d staging/v8 ]; then
+            (cd staging && zip -r "v8_${{ github.event.inputs.v8_version }}.zip" v8/)
+            echo "Created V8 bundle: staging/v8_${{ github.event.inputs.v8_version }}.zip"
+          else
+            echo "No v8 artifacts, skipping v8 bundle"
+          fi
 
-          (cd staging && zip -r "lws_4.3.zip" lws/)
-          echo "Created LWS bundle: staging/lws_4.3.zip"
+          if [ -d staging/lws ]; then
+            (cd staging && zip -r "lws_4.3.zip" lws/)
+            echo "Created LWS bundle: staging/lws_4.3.zip"
+          else
+            echo "No lws artifacts, skipping lws bundle"
+          fi
+
+          if [ -d staging/node ]; then
+            (cd staging && zip -r "node_${{ github.event.inputs.node_version }}.zip" node/)
+            echo "Created node bundle: staging/node_${{ github.event.inputs.node_version }}.zip"
+          else
+            echo "No node artifacts, skipping node bundle"
+          fi
 
       - name: Create Release and Upload Assets
         env:
@@ -205,6 +103,6 @@ jobs:
           gh release create "${{ github.event.inputs.bundle_tag }}" \
             staging/*.zip \
             --title "${{ github.event.inputs.bundle_tag }}" \
-            --notes "V8 and libwebsockets bundles." \
+            --notes "V8, libwebsockets and node bundles." \
             --repo ${{ github.repository }} \
             --target ${{ github.sha }}

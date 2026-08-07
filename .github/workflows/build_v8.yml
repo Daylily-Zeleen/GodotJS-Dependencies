@@ -1,0 +1,141 @@
+name: Build V8
+
+on:
+  workflow_dispatch:
+    inputs:
+      v8_version:
+        description: 'v8 version tag'
+        type: choice
+        options:
+          - "13.5.119"
+          - "12.9.202.28" # 2022
+          - "12.4.254.21" # 2019
+        required: true
+        default: "13.5.119"
+      platforms:
+        description: 'comma-separated platforms to build, empty = all (linux,macos,windows,android,ios)'
+        type: string
+        required: false
+        default: ''
+  workflow_call:
+    inputs:
+      v8_version:
+        required: true
+        type: string
+      platforms:
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  setup:
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    env:
+      PLATFORMS: ${{ inputs.platforms }}
+      SKIP_APPLE: ${{ vars.SKIP_APPLE }}
+      SKIP_WINDOWS: ${{ vars.SKIP_WINDOWS }}
+    steps:
+      - name: Generate build matrix
+        id: gen
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+
+          platforms = os.environ.get('PLATFORMS', '').strip()
+          skip_apple = os.environ.get('SKIP_APPLE', '').strip() == 'true'
+          skip_windows = os.environ.get('SKIP_WINDOWS', '').strip() == 'true'
+
+          combos = [
+            # linux
+            {"platform": "linux", "arch": "x86_64", "runner": "ubuntu-22.04", "target": "x64.release", "staging": "linux.x86_64.release", "artifact": "prebuilt_v8_linux_x86_64"},
+            {"platform": "linux", "arch": "arm64", "runner": "ubuntu-22.04", "target": "arm64.release", "staging": "linux.arm64.release", "artifact": "prebuilt_v8_linux_arm64"},
+            # macos
+            {"platform": "macos", "arch": "arm64", "runner": "macos-latest", "target": "arm64.release", "staging": "macos.arm64.release", "artifact": "prebuilt_v8_macos_arm64"},
+            {"platform": "macos", "arch": "x86_64", "runner": "macos-latest", "target": "x64.release", "staging": "macos.x86_64.release", "artifact": "prebuilt_v8_macos_x86_64"},
+            # windows (arch = gn arch)
+            {"platform": "windows", "arch": "x64", "runner": "windows-2022", "target": "x64.release", "staging": "windows_x86_64_release", "artifact": "prebuilt_v8_windows_x86_64"},
+            {"platform": "windows", "arch": "arm64", "runner": "windows-2022", "target": "arm64.release", "staging": "windows_arm64_release", "artifact": "prebuilt_v8_windows_arm64"},
+            # android
+            {"platform": "android", "arch": "arm64", "runner": "ubuntu-22.04", "target": "arm64.release", "staging": "android.arm64.release", "artifact": "prebuilt_v8_android_arm64"},
+            {"platform": "android", "arch": "arm32", "runner": "ubuntu-22.04", "target": "arm.release", "staging": "android.arm32.release", "artifact": "prebuilt_v8_android_arm32"},
+            {"platform": "android", "arch": "x86_64", "runner": "ubuntu-22.04", "target": "x64.release", "staging": "android.x86_64.release", "artifact": "prebuilt_v8_android_x86_64"},
+            # ios
+            {"platform": "ios", "arch": "arm64", "runner": "macos-latest", "target": "arm64.release", "staging": "ios.arm64.release", "artifact": "prebuilt_v8_ios_arm64"},
+            {"platform": "ios", "arch": "x86_64", "runner": "macos-latest", "target": "x64.release", "staging": "ios.x86_64.release", "artifact": "prebuilt_v8_ios_x86_64"},
+          ]
+
+          want = None
+          if platforms and platforms != 'all':
+              want = {p.strip() for p in platforms.split(',') if p.strip()}
+
+          selected = []
+          for c in combos:
+              if want is not None and c['platform'] not in want:
+                  continue
+              if skip_apple and c['platform'] in ('macos', 'ios'):
+                  continue
+              if skip_windows and c['platform'] == 'windows':
+                  continue
+              selected.append(c)
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
+              f.write(f"matrix={json.dumps(selected)}\n")
+          PY
+
+  build:
+    needs: setup
+    runs-on: ${{ matrix.runner }}
+    env:
+      V8_VERSION: ${{ inputs.v8_version || github.event.inputs.v8_version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.setup.outputs.matrix) }}
+
+    steps:
+      - name: Detect act environment
+        shell: pwsh
+        run: |
+          if ($env:ACT) { echo "IS_ACT=true" >> $env:GITHUB_ENV } else { echo "IS_ACT=false" >> $env:GITHUB_ENV }
+
+      - uses: actions/checkout@v4
+        with:
+          path: Scripts
+
+      - uses: actions/setup-python@v5
+        if: ${{ !startsWith(matrix.platform, 'macos') || vars.HOST_MACOS != 'true' }}
+        with:
+          python-version: '3.12'
+          architecture: 'x64'
+
+      - name: Cache depot_tools
+        uses: actions/cache@v4
+        with:
+          path: depot_tools
+          key: depot_tools-${{ runner.os }}-${{ github.ref_name }}
+          restore-keys: |
+            depot_tools-${{ runner.os }}-
+
+      - name: Fetch v8 (${{ matrix.platform }} ${{ matrix.arch }})
+        uses: ./.github/actions/v8/fetch
+        with:
+          v8_version: ${{ env.V8_VERSION }}
+          platform: ${{ matrix.platform }}
+          arch: ${{ matrix.arch }}
+
+      - name: Build v8 (${{ matrix.platform }} ${{ matrix.arch }})
+        uses: ./.github/actions/v8/build
+        with:
+          v8_version: ${{ env.V8_VERSION }}
+          platform: ${{ matrix.platform }}
+          arch: ${{ matrix.arch }}
+          target: ${{ matrix.target }}
+          staging_dir: ${{ matrix.staging }}
+
+      - name: Upload
+        uses: ./.github/actions/upload
+        with:
+          artifact_name: ${{ matrix.artifact }}
