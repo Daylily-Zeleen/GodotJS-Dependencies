@@ -29,6 +29,11 @@ runs:
             ninja-build generate-ninja pkg-config zip unzip ca-certificates
         fi
 
+        # --- V8 13.x needs C++20 (std::make_unique_for_overwrite): use gcc-12 ---
+        if [ "${{ inputs.platform }}" = "linux" ]; then
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc-12 g++-12
+        fi
+
         cd "$GITHUB_WORKSPACE"
 
         # --- Android: fetch NDK r23c and append config to args.gn ---

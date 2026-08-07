@@ -54,6 +54,11 @@ runs:
         # --- generate + configure + build ---
         python ./tools/dev/v8gen.py ${{ inputs.target }}
         cp "$GITHUB_WORKSPACE/Scripts/config/v8/v8.${{ inputs.platform }}_${{ inputs.arch }}.args.gn" "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/args.gn"
+        # V8 13.x needs C++20: point gn at gcc-12 (linux only)
+        if [ "${{ inputs.platform }}" = "linux" ]; then
+          echo 'cc = "gcc-12"' >> "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/args.gn"
+          echo 'cxx = "g++-12"' >> "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/args.gn"
+        fi
         cat "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/args.gn"
         ls -l "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/"
         ninja -C "./out.gn/${{ inputs.target }}" v8_monolith
