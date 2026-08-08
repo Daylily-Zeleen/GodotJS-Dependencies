@@ -38,7 +38,10 @@ export CXX="${CLANGPP} -isysroot ${SDK_PATH} -arch arm64 -miphoneos-version-min=
 # -framework CoreFoundation via OTHER_LDFLAGS (Xcode-only), which gyp's make
 # generator ignores when flavor is ios (falls back to linux link cmds). Host
 # tools (gen-regexp-special-case etc.) then fail with undefined CF symbols.
-export LDFLAGS="-isysroot ${SDK_PATH} -arch arm64 -framework CoreFoundation"
+# configure.py ignores the LDFLAGS env var, but gyp reads LINK/LINK_host
+# (same mechanism as CXX above), so embed -framework there.
+export LINK="${CLANGPP} -isysroot ${SDK_PATH} -arch arm64 -miphoneos-version-min=${IOS_DEPLOYMENT_TARGET} -framework CoreFoundation"
+export LINK_host="${CLANGPP} -framework CoreFoundation"
 export CXXFLAGS="-std=c++20"
 
 ./configure \
