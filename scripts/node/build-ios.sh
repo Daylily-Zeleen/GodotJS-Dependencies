@@ -28,6 +28,19 @@ cd node
 # We don't need this test binary, so drop it BEFORE configure (gyp reads the
 # gypi at configure time to generate the Makefiles).
 sed -i.bak '/openssl.gyp:openssl-cli/d' node.gypi
+
+# node's system root-cert lookup (src/crypto/crypto_context.cc) uses the
+# macOS-only SecTrustSettings API (kSecTrustSettings* keys/domains live in
+# SecTrustSettings.h, which the iOS SDK does not ship). Inject a shim header
+# that defines them for iOS and stubs the API to errSecItemNotFound so
+# certificates fall back to SecTrustEvaluateWithError (see
+# scripts/node/ios-sectrustsettings.h). macOS builds are unaffected.
+cp "$WORKSPACE/Scripts/scripts/node/ios-sectrustsettings.h" src/crypto/
+# Insert the shim include AFTER <Security/Security.h> so the shim's
+# #define SecTrustSettingsCopyTrustSettings does not rewrite the SDK's own
+# declaration (which would cause a redefinition error).
+perl -i.bak -pe 's{(#include <Security/Security\.h>)}{$1\n#include "ios-sectrustsettings.h"}' src/crypto/crypto_context.cc
+
 export CC="${CLANG} -isysroot ${SDK_PATH} -arch arm64 -miphoneos-version-min=${IOS_DEPLOYMENT_TARGET}"
 # Apple clang defaults to C++14; node v24 needs C++20 (abseil + ncrypto
 # operator<=>). Put -std=c++20 in CXX itself so gyp's HOST targets
