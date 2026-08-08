@@ -47,6 +47,13 @@ esac
 # node v24 android builds are driven by ./android-configure (sets GYP_DEFINES
 # android_ndk_path). Usage: android-configure <ndk_path> <api> <arch>
 ./android-configure "$NDK_ROOT" "$ANDROID_API" "$NDK_ARCH"
+
+# android-configure exports CC/CXX=NDK clang for ALL targets, but host tools
+# (obj.host: mksnapshot, torque, etc.) must use the system toolchain - NDK bionic
+# lacks glibc-only backtrace_symbols used by v8 stack_trace_posix.cc.
+export CC_host="${CC_host:-gcc}"
+export CXX_host="${CXX_host:-g++}"
+export AR_host="${AR_host:-ar}"
 make -j"$(nproc)"
 
 # --- Locate static library (path varies across versions) ---
