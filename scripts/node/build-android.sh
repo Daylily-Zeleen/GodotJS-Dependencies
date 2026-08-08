@@ -18,7 +18,7 @@ $SUDO apt-get clean || true
 $SUDO rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* || true
 $SUDO DEBIAN_FRONTEND=noninteractive apt-get update
 $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  git ca-certificates python3 python3-pip make unzip
+  git ca-certificates python3 python3-pip make unzip gcc-12 g++-12
 
 # --- Fetch Android NDK (cached by workflow if possible) ---
 if [ ! -d "$WORKSPACE/android-ndk-${ANDROID_NDK_VERSION}" ]; then
@@ -49,8 +49,8 @@ esac
 # bionic lacks glibc-only backtrace_symbols used by v8 stack_trace_posix.cc.
 # IMPORTANT: gyp reads CC_host/CXX_host when generating Makefiles, so they
 # must be exported BEFORE ./android-configure runs.
-export CC_host="${CC_host:-gcc}"
-export CXX_host="${CXX_host:-g++}"
+export CC_host="${CC_host:-gcc-12}"
+export CXX_host="${CXX_host:-g++-12}"
 export AR_host="${AR_host:-ar}"
 
 # node v24 android builds are driven by ./android-configure (sets GYP_DEFINES
