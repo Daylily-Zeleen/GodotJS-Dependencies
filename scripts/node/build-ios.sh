@@ -44,12 +44,14 @@ fi
 echo "Found: $LIB"
 
 # --- Stage artifacts ---
-mkdir -p "$WORKSPACE/staging/node/ios_arm64_release"
-cp -a include "$WORKSPACE/staging/node/ios_arm64_release/include"
+# node v24 has no top-level include/; generate headers via tools/install.py
+STAGE_DIR="$WORKSPACE/staging/node/ios_arm64_release"
+mkdir -p "$STAGE_DIR"
+python3 tools/install.py install --headers-only --dest-dir "$STAGE_DIR" --prefix "/"
 if [ -f out/Release/config.gypi ]; then
-  cp out/Release/config.gypi "$WORKSPACE/staging/node/ios_arm64_release/"
+  cp out/Release/config.gypi "$STAGE_DIR/"
 fi
-cp "$LIB" "$WORKSPACE/staging/node/ios_arm64_release/"
+cp "$LIB" "$STAGE_DIR/"
 
 echo "== staging layout =="
 find "$WORKSPACE/staging" -type f | sort

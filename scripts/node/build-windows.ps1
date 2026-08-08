@@ -37,7 +37,8 @@ Write-Host "Found: $($Lib.FullName)"
 $PlatformName = if ($DestCpu -eq "x64") { "x86_64" } else { $DestCpu }
 $StageDir = Join-Path $Workspace "staging/node/windows_${PlatformName}_release"
 New-Item -ItemType Directory -Force -Path $StageDir | Out-Null
-Copy-Item -Recurse -Force "include" (Join-Path $StageDir "include")
+# node v24 has no top-level include/; generate headers via tools/install.py
+python tools/install.py install --headers-only --dest-dir $StageDir --prefix "/"
 if (Test-Path "out/Release/config.gypi") {
   Copy-Item -Force "out/Release/config.gypi" $StageDir
 }
