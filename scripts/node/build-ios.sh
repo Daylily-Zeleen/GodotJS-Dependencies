@@ -69,7 +69,9 @@ sed -i.bak 's/^#define HAVE_SYS_RANDOM_H 1/\/\* #undef HAVE_SYS_RANDOM_H *\//' \
 find out -name 'Makefile' -o -name '*.mk' | while read -r mf; do
   sed -i.bak -e 's/ -Wl,--start-group//g' -e 's/ -Wl,--end-group//g' "$mf"
 done
-make -C out BUILDTYPE=Release node -j"$(sysctl -n hw.ncpu || echo 4)"
+# Limit parallelism: macos runners OOM-kill icupkg (generates icudt78l.dat)
+# when -j is too high (all cores compile + icupkg peak memory).
+make -C out BUILDTYPE=Release node -j2
 
 # --- Locate static library (path varies across versions) ---
 LIB="$(find out -name 'libnode.a' -print -quit)"
