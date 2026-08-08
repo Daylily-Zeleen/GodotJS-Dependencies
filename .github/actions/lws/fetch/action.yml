@@ -74,7 +74,9 @@ runs:
           exit 1
         fi
         cd libwebsockets
-        git checkout v4.3-stable      - name: Fetch lws (windows)
+        git checkout v4.3-stable
+
+    - name: Fetch lws (windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
