@@ -56,7 +56,10 @@ export AR_host="${AR_host:-ar}"
 # node v24 android builds are driven by ./android-configure (sets GYP_DEFINES
 # android_ndk_path). Usage: android-configure <ndk_path> <api> <arch>
 ./android-configure "$NDK_ROOT" "$ANDROID_API" "$NDK_ARCH"
-make -j"$(nproc)"
+# Build ONLY the 'node' target. The top-level 'make' builds ALL gyp targets
+# including the android-only openssl-cli tool which fails to link
+# (undefined android_getCpuFeatures from NDK cpufeatures, not linked by gyp).
+make -C out/Release node -j"$(nproc)"
 
 # --- Locate static library (path varies across versions) ---
 LIB="$(find out -name 'libnode.a' -print -quit)"

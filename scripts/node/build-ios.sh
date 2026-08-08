@@ -45,7 +45,10 @@ export CXXFLAGS="-std=c++20"
 sed -i.bak 's/^#define HAVE_SYS_RANDOM_H 1/\/\* #undef HAVE_SYS_RANDOM_H *\//' \
   deps/cares/config/darwin/ares_config.h
 
-make -j"$(sysctl -n hw.ncpu || echo 4)"
+# Build ONLY the 'node' target. The top-level 'make' builds ALL gyp targets
+# including test programs (nop, overlapped-checker) that fail to link on iOS
+# (gyp adds GNU ld --start-group which Apple ld64 rejects).
+make -C out/Release node -j"$(sysctl -n hw.ncpu || echo 4)"
 
 # --- Locate static library (path varies across versions) ---
 LIB="$(find out -name 'libnode.a' -print -quit)"
