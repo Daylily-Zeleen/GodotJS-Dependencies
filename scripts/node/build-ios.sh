@@ -70,8 +70,25 @@ find out -name 'Makefile' -o -name '*.mk' | while read -r mf; do
     -e 's/\($(LDFLAGS\.$(TOOLSET))\)/\1 -framework CoreFoundation/g' "$mf"
 done
 # Limit parallelism: macos runners OOM-kill icupkg (generates icudt78l.dat)
-# when -j is too high (all cores compile + icupkg peak memory).
-make -C out BUILDTYPE=Release node -j2
+# when -j is too high (all cores compile + icupkg peak memory). -j2 is
+# usually safe but the OOM is flaky, so retry: gyp's make is incremental, so
+# after a killed job the retry only re-runs the remaining targets with much
+# lower memory pressure (icupkg runs almost alone).
+made=0
+JOBS=2
+for i in 1 2 3; do
+  echo "=== make attempt $i (jobs=$JOBS) ==="
+  if make -C out BUILDTYPE=Release node -j"$JOBS"; then
+    made=1
+    break
+  fi
+  echo "attempt $i failed (exit $?); retrying incremental build with fewer jobs"
+  JOBS=1
+done
+if [ "$made" -ne 1 ]; then
+  echo "node make failed after 3 attempts" >&2
+  exit 1
+fi
 
 # --- Locate static library (path varies across versions) ---
 LIB="$(find out -name 'libnode.a' -print -quit)"

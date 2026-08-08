@@ -68,7 +68,25 @@ sed -i.bak '/openssl.gyp:openssl-cli/d' node.gypi
 # which fails to link (undefined android_getCpuFeatures from NDK cpufeatures,
 # not linked by gyp). configure only writes out/Makefile; the out/Release/ dir
 # is created by gyp during the build, so pass BUILDTYPE.
-make -C out BUILDTYPE=Release node -j"$(nproc)"
+# Full parallelism occasionally crashes clang (SIGSEGV, exit 139) on large
+# v8 TUs (e.g. json-stringifier.cc) under peak memory. gyp's make is
+# incremental, so retry with fewer jobs: the retry only compiles the
+# remaining files with much lower memory pressure.
+made=0
+JOBS="$(nproc)"
+for i in 1 2 3; do
+  echo "=== make attempt $i (jobs=$JOBS) ==="
+  if make -C out BUILDTYPE=Release node -j"$JOBS"; then
+    made=1
+    break
+  fi
+  echo "attempt $i failed (exit $?); retrying incremental build with fewer jobs"
+  JOBS=2
+done
+if [ "$made" -ne 1 ]; then
+  echo "node make failed after 3 attempts" >&2
+  exit 1
+fi
 
 # --- Locate static library (path varies across versions) ---
 LIB="$(find out -name 'libnode.a' -print -quit)"
