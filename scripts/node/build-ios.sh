@@ -70,26 +70,27 @@ sed -i.bak 's/^#define HAVE_SYS_RANDOM_H 1/\/\* #undef HAVE_SYS_RANDOM_H *\//' \
 # runners icupkg gets OOM-killed (Killed: 9 / Error 137) even at -j1. Pre-
 # touching the output is NOT enough because the ACTION rule also depends on the
 # freshly-linked $(builddir)/icupkg binary (always newer than our copy), so
-# make re-runs the ACTION. Instead rewrite the recipe to /bin/cp with the same
-# in/out args (icupkg in out == cp in out). Handle both quoted and unquoted
-# icupkg invocations.
+# make re-runs the ACTION. Instead, replace the recipe cmd with `true` (the
+# output was pre-created below; the ACTION just needs to exit 0). We tried
+# rewriting the command to /bin/cp but that broke quoting for the
+# "$(builddir)/icupkg" form (left a dangling quote). `true` has no quoting.
 find out \( -name 'Makefile' -o -name '*.mk' \) | while read -r mf; do
   sed -i.bak \
     -e 's/ -Wl,--start-group//g' \
     -e 's/ -Wl,--end-group//g' \
     -e 's/\($(LDFLAGS\.$(TOOLSET))\)/\1 -framework CoreFoundation/g' \
-    -e 's|"/[^"]*/icupkg" -tl |/bin/cp |g' \
-    -e 's|/icupkg" -tl |/bin/cp |g' \
-    -e 's|icupkg -tl |/bin/cp |g' "$mf"
+    -e '/icupkg/ s/^\(cmd_[^ =]* = \).*/\1true/' "$mf"
 done
-# Also pre-create the output as a fallback (harmless if the ACTION still runs).
+# Pre-create the output that the (now no-op) icupkg ACTION was supposed to
+# produce: for little-endian targets the input .dat is already in the final
+# byte order, so a plain copy is byte-identical.
 mkdir -p out/Release/obj/gen
 if [ -f deps/icu-tmp/icudt78l.dat ]; then
   cp deps/icu-tmp/icudt78l.dat out/Release/obj/gen/icudt78l.dat
   touch out/Release/obj/gen/icudt78l.dat
-  echo "bypassed icupkg: recipe rewritten to /bin/cp + output pre-created (byte-identical for little-endian)"
+  echo "bypassed icupkg: ACTION recipe -> true + output pre-created (byte-identical for little-endian)"
 else
-  echo "WARNING: deps/icu-tmp/icudt78l.dat not found - icupkg recipe patched but input missing" >&2
+  echo "WARNING: deps/icu-tmp/icudt78l.dat not found - icupkg ACTION neutralized but input missing" >&2
 fi
 # Limit parallelism: macos runners OOM-kill icupkg (generates icudt78l.dat)
 # when -j is too high (all cores compile + icupkg peak memory). -j2 is
