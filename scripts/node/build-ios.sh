@@ -34,7 +34,11 @@ export CC="${CLANG} -isysroot ${SDK_PATH} -arch arm64 -miphoneos-version-min=${I
 # (obj.host: mksnapshot/abseil) inherit it too - CXXFLAGS only reaches
 # obj.target targets.
 export CXX="${CLANGPP} -isysroot ${SDK_PATH} -arch arm64 -miphoneos-version-min=${IOS_DEPLOYMENT_TARGET} -std=c++20"
-export LDFLAGS="-isysroot ${SDK_PATH} -arch arm64"
+# abseil's cctz uses CoreFoundation on Apple platforms; abseil.gyp attaches
+# -framework CoreFoundation via OTHER_LDFLAGS (Xcode-only), which gyp's make
+# generator ignores when flavor is ios (falls back to linux link cmds). Host
+# tools (gen-regexp-special-case etc.) then fail with undefined CF symbols.
+export LDFLAGS="-isysroot ${SDK_PATH} -arch arm64 -framework CoreFoundation"
 export CXXFLAGS="-std=c++20"
 
 ./configure \
