@@ -34,14 +34,7 @@ export CC="${CLANG} -isysroot ${SDK_PATH} -arch arm64 -miphoneos-version-min=${I
 # (obj.host: mksnapshot/abseil) inherit it too - CXXFLAGS only reaches
 # obj.target targets.
 export CXX="${CLANGPP} -isysroot ${SDK_PATH} -arch arm64 -miphoneos-version-min=${IOS_DEPLOYMENT_TARGET} -std=c++20"
-# abseil's cctz uses CoreFoundation on Apple platforms; abseil.gyp attaches
-# -framework CoreFoundation via OTHER_LDFLAGS (Xcode-only), which gyp's make
-# generator ignores when flavor is ios (falls back to linux link cmds). Host
-# tools (gen-regexp-special-case etc.) then fail with undefined CF symbols.
-# configure.py ignores the LDFLAGS env var, but gyp reads LINK/LINK_host
-# (same mechanism as CXX above), so embed -framework there.
-export LINK="${CLANGPP} -isysroot ${SDK_PATH} -arch arm64 -miphoneos-version-min=${IOS_DEPLOYMENT_TARGET} -framework CoreFoundation"
-export LINK_host="${CLANGPP} -framework CoreFoundation"
+export LDFLAGS="-isysroot ${SDK_PATH} -arch arm64"
 export CXXFLAGS="-std=c++20"
 
 ./configure \
@@ -66,11 +59,15 @@ sed -i.bak 's/^#define HAVE_SYS_RANDOM_H 1/\/\* #undef HAVE_SYS_RANDOM_H *\//' \
 # out/Release/ dir is created by gyp during the build, so pass BUILDTYPE.
 # node configure sets gyp flavor to 'ios', which gyp's make generator does not
 # recognize, so it falls back to LINK_COMMANDS_LINUX which embeds GNU-ld-only
-# -Wl,--start-group/--end-group. Apple's ld64 rejects those flags (host tools
-# like node_js2c/genccode fail to link). Strip them from the generated
-# makefiles (gyp itself strips them for wasm builds the same way).
+# -Wl,--start-group/--end-group (Apple ld64 rejects) and drops the
+# -framework CoreFoundation that abseil's cctz needs (attached via
+# OTHER_LDFLAGS, an Xcode-only field). Patch the generated makefiles: strip
+# start/end-group and append the CoreFoundation framework to the link rule.
 find out -name 'Makefile' -o -name '*.mk' | while read -r mf; do
-  sed -i.bak -e 's/ -Wl,--start-group//g' -e 's/ -Wl,--end-group//g' "$mf"
+  sed -i.bak \
+    -e 's/ -Wl,--start-group//g' \
+    -e 's/ -Wl,--end-group//g' \
+    -e 's/\($(LDFLAGS\.$(TOOLSET))\)/\1 -framework CoreFoundation/g' "$mf"
 done
 # Limit parallelism: macos runners OOM-kill icupkg (generates icudt78l.dat)
 # when -j is too high (all cores compile + icupkg peak memory).
