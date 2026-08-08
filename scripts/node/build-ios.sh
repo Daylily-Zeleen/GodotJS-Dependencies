@@ -69,6 +69,24 @@ find out -name 'Makefile' -o -name '*.mk' | while read -r mf; do
     -e 's/ -Wl,--end-group//g' \
     -e 's/\($(LDFLAGS\.$(TOOLSET))\)/\1 -framework CoreFoundation/g' "$mf"
 done
+
+# Bypass the icupkg ACTION. gyp's comment for it is literally "Copy the .dat
+# file, swapping endianness if needed" - icu_endianness is the HOST byte order
+# (configure.py: icu_endianness = sys.byteorder[0]), and the iOS target is also
+# little-endian, so `icupkg -t l` is a byte-identical no-op copy. The input
+# deps/icu-tmp/icudt78l.dat already exists after configure (configure.py errors
+# if it is missing). On macOS runners icupkg gets OOM-killed (Killed: 9 / Error
+# 137) even at -j1, so skip it by pre-creating the expected gyp output with a
+# fresh timestamp - make then skips the ACTION (output newer than input).
+# Note: SHARED_INTERMEDIATE_DIR is out/Release/obj/gen (per the icupkg log).
+mkdir -p out/Release/obj/gen
+if [ -f deps/icu-tmp/icudt78l.dat ]; then
+  cp deps/icu-tmp/icudt78l.dat out/Release/obj/gen/icudt78l.dat
+  touch out/Release/obj/gen/icudt78l.dat
+  echo "bypassed icupkg: copied deps/icu-tmp/icudt78l.dat -> out/Release/obj/gen/icudt78l.dat (byte-identical for little-endian)"
+else
+  echo "WARNING: deps/icu-tmp/icudt78l.dat not found - icupkg will run normally" >&2
+fi
 # Limit parallelism: macos runners OOM-kill icupkg (generates icudt78l.dat)
 # when -j is too high (all cores compile + icupkg peak memory). -j2 is
 # usually safe but the OOM is flaky, so retry: gyp's make is incremental, so
