@@ -87,9 +87,13 @@ runs:
         cd "$env:GITHUB_WORKSPACE/libwebsockets"
         New-Item -ItemType Directory -Force -Path out | Out-Null
         cd out
+        # LWS_WITH_EVENT_LIBS=ON is required on Windows: pollfd.c declares 'vpt'
+        # only when LWS_WITH_EVENT_LIBS is undefined AND not WIN32, but still uses
+        # it under the poll() path, so without event libs MSVC hits C2065 'vpt'.
         cmake -G "Visual Studio 17 2022" -A x64 `
           -DLWS_WITH_SHARED=OFF `
           -DLWS_WITH_SSL=0 `
+          -DLWS_WITH_EVENT_LIBS=ON `
           -DCMAKE_C_FLAGS_RELEASE="/MT /O2 /Ob2 /DNDEBUG" `
           ..
         cmake --build . --config Release -- /m
