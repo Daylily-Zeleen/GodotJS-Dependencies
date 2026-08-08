@@ -127,12 +127,12 @@ jobs:
           python-version: '3.12'
           architecture: 'x64'
 
-      - name: Cache Android NDK r23c
+      - name: Cache Android NDK r25c
         if: matrix.platform == 'android'
         uses: actions/cache@v4
         with:
-          path: android-ndk-r23c
-          key: android-ndk-r23c-${{ runner.os }}-v23c
+          path: android-ndk-r25c
+          key: android-ndk-r25c-${{ runner.os }}-v25c
 
       - name: Fetch node (${{ matrix.platform }} ${{ matrix.arch }})
         uses: ./Scripts/.github/actions/node/fetch
