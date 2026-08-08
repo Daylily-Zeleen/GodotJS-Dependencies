@@ -36,6 +36,18 @@ export CC="${CLANG} -isysroot ${SDK_PATH} -arch arm64 -miphoneos-version-min=${I
 export CXX="${CLANGPP} -isysroot ${SDK_PATH} -arch arm64 -miphoneos-version-min=${IOS_DEPLOYMENT_TARGET} -std=c++20"
 export LDFLAGS="-isysroot ${SDK_PATH} -arch arm64"
 export CXXFLAGS="-std=c++20"
+# CRITICAL: gyp separates the host toolset when --cross-compiling
+# (configure.py sets want_separate_host_toolset=1) and builds it with
+# CC.host/CXX.host, which fall back to the CC/CXX env vars when CC_host/
+# CXX_host are unset (gyp make.py GetEnvironFallback). Our CC/CXX carry
+# -isysroot iphoneos -arch arm64 -miphoneos-version-min, so without this the
+# host tools (icupkg, genccode, mksnapshot, torque, gen-regexp,
+# bytecode_builtins_list_generator) are linked as iOS-platform Mach-O
+# binaries - macOS refuses to exec those (instant SIGKILL "Killed: 9", which
+# we had misread as OOM). Set CC_host/CXX_host to the plain macOS toolchain
+# so host tools build as native arm64 macOS binaries and actually run.
+export CC_host="clang"
+export CXX_host="clang++ -std=c++20"
 
 ./configure \
   --dest-os=ios \
@@ -74,35 +86,23 @@ sed -i.bak 's/^#define HAVE_SYS_RANDOM_H 1/\/\* #undef HAVE_SYS_RANDOM_H *\//' \
 # output was pre-created below; the ACTION just needs to exit 0). We tried
 # rewriting the command to /bin/cp but that broke quoting for the
 # "$(builddir)/icupkg" form (left a dangling quote). `true` has no quoting.
+# NOTE: all of the above (icupkg bypass, pre-copy) became UNNECESSARY once
+# CC_host/CXX_host make the host tools native macOS binaries - icupkg and
+# genccode now run normally. Only the link-rule fixes below (strip GNU-ld
+# flags, add CoreFoundation) are still required.
 find out \( -name 'Makefile' -o -name '*.mk' \) | while read -r mf; do
   sed -i.bak \
     -e 's/ -Wl,--start-group//g' \
     -e 's/ -Wl,--end-group//g' \
-    -e 's/\($(LDFLAGS\.$(TOOLSET))\)/\1 -framework CoreFoundation/g' \
-    -e '/icupkg/ s/^\(cmd_[^ =]* = \).*/\1true/' "$mf"
+    -e 's/\($(LDFLAGS\.$(TOOLSET))\)/\1 -framework CoreFoundation/g' "$mf"
 done
-# Pre-create the output that the (now no-op) icupkg ACTION was supposed to
-# produce: for little-endian targets the input .dat is already in the final
-# byte order, so a plain copy is byte-identical.
-mkdir -p out/Release/obj/gen
-if [ -f deps/icu-tmp/icudt78l.dat ]; then
-  cp deps/icu-tmp/icudt78l.dat out/Release/obj/gen/icudt78l.dat
-  touch out/Release/obj/gen/icudt78l.dat
-  echo "bypassed icupkg: ACTION recipe -> true + output pre-created (byte-identical for little-endian)"
-else
-  echo "WARNING: deps/icu-tmp/icudt78l.dat not found - icupkg ACTION neutralized but input missing" >&2
-fi
-# Limit parallelism: macos runners OOM-kill icupkg (generates icudt78l.dat)
-# when -j is too high (all cores compile + icupkg peak memory). -j2 is
-# usually safe but the OOM is flaky, so retry: gyp's make is incremental, so
-# after a killed job the retry only re-runs the remaining targets with much
-# lower memory pressure (icupkg runs almost alone).
-# macos-latest runners are Apple Silicon with only 7 GB RAM. node's iOS build
-# (V8 host tools torque/genccode/bytecode_builtins + target compiles) OOMs the
-# runner under any parallelism, and even a single host tool can die if memory is
-# left fragmented by a previous attempt. Build strictly single-threaded (-j1)
-# and aggressively kill ALL leftover build processes between retries (anything
-# under out/Release, plus the compiler drivers and cc1 subprocesses).
+# Limit parallelism: the earlier "OOM-kill" of host tools was actually macOS
+# rejecting iOS-platform host binaries at exec (see CC_host comment above) -
+# with native host tools the build no longer dies there, but the runner only
+# has 7 GB RAM and V8 host tools (torque/mksnapshot) are memory-hungry, so
+# stay on -j1. Keep the retry loop as cheap insurance: gyp's make is
+# incremental, and we aggressively kill leftover build processes between
+# retries.
 made=0
 for i in 1 2 3; do
   echo "=== make attempt $i (jobs=1) ==="
