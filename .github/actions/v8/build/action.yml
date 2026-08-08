@@ -54,13 +54,14 @@ runs:
         # --- generate + configure + build ---
         python ./tools/dev/v8gen.py ${{ inputs.target }}
         cp "$GITHUB_WORKSPACE/Scripts/config/v8/v8.${{ inputs.platform }}_${{ inputs.arch }}.args.gn" "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/args.gn"
-        # V8 13.x needs C++20: point gn at gcc-12 (linux only)
+        # V8 13.x needs C++20 std::make_unique_for_overwrite (libstdc++ >= GCC 11).
+        # The chromium debian bullseye sysroot ships GCC 10 libstdc++ which lacks it,
+        # so on linux use the host system headers instead of the sysroot.
         # NB: args.gn may lack a trailing newline, so ensure one before appending
         if [ "${{ inputs.platform }}" = "linux" ]; then
           ARGS="$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/args.gn"
           printf '\n' >> "$ARGS"
-          printf 'cc = "gcc-12"\n' >> "$ARGS"
-          printf 'cxx = "g++-12"\n' >> "$ARGS"
+          printf 'use_sysroot = false\n' >> "$ARGS"
         fi
         cat "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/args.gn"
         ls -l "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/"
