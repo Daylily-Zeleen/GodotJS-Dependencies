@@ -17,7 +17,9 @@ Set-Location node
 
 # --- Configure & build with MSVC ---
 # Node ships vcbuild.bat which wraps configure + msbuild for the VS toolchain.
-& ".\vcbuild.bat" $DestCpu release
+# vcbuild.bat expects 'x64' (not 'x86_64'), so map the matrix arch first.
+$VcCpu = if ($DestCpu -eq "x86_64") { "x64" } else { $DestCpu }
+& ".\vcbuild.bat" $VcCpu release
 if ($LASTEXITCODE -ne 0) { throw "vcbuild.bat failed with exit code $LASTEXITCODE" }
 
 # --- Locate static library (path varies across versions) ---
@@ -34,7 +36,7 @@ Write-Host "Found: $($Lib.FullName)"
 
 # --- Stage artifacts ---
 # Follow repo convention: x64 -> x86_64
-$PlatformName = if ($DestCpu -eq "x64") { "x86_64" } else { $DestCpu }
+$PlatformName = if ($VcCpu -eq "x64") { "x86_64" } else { $VcCpu }
 $StageDir = Join-Path $Workspace "staging/node/windows_${PlatformName}_release"
 New-Item -ItemType Directory -Force -Path $StageDir | Out-Null
 # node v24 has no top-level include/; generate headers via tools/install.py
