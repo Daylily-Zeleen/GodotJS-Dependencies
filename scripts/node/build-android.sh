@@ -37,29 +37,16 @@ fi
 
 # --- Configure & build with NDK cross toolchain ---
 cd node
-TOOLCHAIN="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64"
 case "$DEST_CPU" in
-  arm64) TRIPLE="aarch64-linux-android" ;;
-  arm)   TRIPLE="armv7a-linux-androideabi" ;;
-  x64)   TRIPLE="x86_64-linux-android" ;;
+  arm64) NDK_ARCH="arm64" ;;
+  arm)   NDK_ARCH="arm" ;;
+  x64)   NDK_ARCH="x64" ;;
   *)     echo "Unsupported dest_cpu: $DEST_CPU" >&2; exit 1 ;;
 esac
 
-export CC="$TOOLCHAIN/bin/${TRIPLE}${ANDROID_API}-clang"
-export CXX="$TOOLCHAIN/bin/${TRIPLE}${ANDROID_API}-clang++"
-export AR="$TOOLCHAIN/bin/llvm-ar"
-export LD="$TOOLCHAIN/bin/ld"
-export STRIP="$TOOLCHAIN/bin/llvm-strip"
-export CPPFLAGS="-D__ANDROID_API__=${ANDROID_API}"
-
-./configure \
-  --dest-os=android \
-  --dest-cpu="$DEST_CPU" \
-  --cross-compiling \
-  --android-ndk="$NDK_ROOT" \
-  --without-npm \
-  --without-inspector \
-  --without-report
+# node v24 android builds are driven by ./android-configure (sets GYP_DEFINES
+# android_ndk_path). Usage: android-configure <ndk_path> <api> <arch>
+./android-configure "$NDK_ROOT" "$ANDROID_API" "$NDK_ARCH"
 make -j"$(nproc)"
 
 # --- Locate static library (path varies across versions) ---

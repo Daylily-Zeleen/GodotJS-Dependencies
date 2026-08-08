@@ -105,4 +105,5 @@ runs:
         cd v8
         call git fetch origin refs/tags/${{ inputs.v8_version }}
         call git checkout FETCH_HEAD
-        call gclient sync -D --force --reset --nohooks
+        rem keep hooks on windows (no vpython numpy issue; LASTCHANGE.committime needed by gn)
+        call gclient sync -D --force --reset
