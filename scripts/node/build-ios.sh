@@ -86,8 +86,11 @@ sed -i.bak 's/^#define HAVE_SYS_RANDOM_H 1/\/\* #undef HAVE_SYS_RANDOM_H *\//' \
 # recognize, so it falls back to LINK_COMMANDS_LINUX which embeds GNU-ld-only
 # -Wl,--start-group/--end-group (Apple ld64 rejects) and drops the
 # -framework CoreFoundation that abseil's cctz needs (attached via
-# OTHER_LDFLAGS, an Xcode-only field). Patch the generated makefiles: strip
-# start/end-group and append the CoreFoundation framework to the link rule.
+# OTHER_LDFLAGS, an Xcode-only field) and -framework Security that node's
+# --use-system-ca SecTrust code needs (node.gypi adds both only under
+# OS=="mac", which the ios flavor's LINK_COMMANDS_LINUX fallback drops).
+# Patch the generated makefiles: strip start/end-group and append both
+# frameworks to the link rule.
 # Bypass the icupkg ACTION. gyp's comment for it is literally "Copy the .dat
 # file, swapping endianness if needed" - icu_endianness is the HOST byte order
 # (configure.py: icu_endianness = sys.byteorder[0]), and the iOS target is also
@@ -107,7 +110,7 @@ find out \( -name 'Makefile' -o -name '*.mk' \) | while read -r mf; do
   sed -i.bak \
     -e 's/ -Wl,--start-group//g' \
     -e 's/ -Wl,--end-group//g' \
-    -e 's/\($(LDFLAGS\.$(TOOLSET))\)/\1 -framework CoreFoundation/g' "$mf"
+    -e 's/\($(LDFLAGS\.$(TOOLSET))\)/\1 -framework CoreFoundation -framework Security/g' "$mf"
 done
 # Limit parallelism: the earlier "OOM-kill" of host tools was actually macOS
 # rejecting iOS-platform host binaries at exec (see CC_host comment above) -
