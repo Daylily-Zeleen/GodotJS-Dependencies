@@ -80,7 +80,17 @@ for i in 1 2 3; do
     made=1
     break
   fi
-  echo "attempt $i failed (exit $?); retrying incremental build with fewer jobs"
+  echo "attempt $i failed (exit $?); killing leftover build procs and retrying"
+  # A clang frontend crash (exit 139, e.g. json-stringifier.cc) under peak
+  # memory can leave sibling build processes behind. Kill leftovers before
+  # retrying so the lower-parallelism retry has real headroom.
+  pkill -9 -f 'clang' 2>/dev/null || true
+  pkill -9 -f 'cc1' 2>/dev/null || true
+  pkill -9 -f 'icupkg' 2>/dev/null || true
+  pkill -9 -f 'mksnapshot' 2>/dev/null || true
+  pkill -9 -f 'genccode' 2>/dev/null || true
+  pkill -9 -f 'node_js2c' 2>/dev/null || true
+  sleep 5
   JOBS=2
 done
 if [ "$made" -ne 1 ]; then

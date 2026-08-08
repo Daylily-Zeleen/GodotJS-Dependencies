@@ -82,7 +82,19 @@ for i in 1 2 3; do
     made=1
     break
   fi
-  echo "attempt $i failed (exit $?); retrying incremental build with fewer jobs"
+  echo "attempt $i failed (exit $?); killing leftover build procs and retrying"
+  # When a parallel make dies (OOM Error 137 on icupkg), sibling clang/icupkg
+  # child processes can be left running and keep consuming memory, starving the
+  # retry (observed: -j1 retries die in ~1s). Kill leftovers before retrying.
+  pkill -9 -f 'clang' 2>/dev/null || true
+  pkill -9 -f 'cc1' 2>/dev/null || true
+  pkill -9 -f 'icupkg' 2>/dev/null || true
+  pkill -9 -f 'genccode' 2>/dev/null || true
+  pkill -9 -f 'node_js2c' 2>/dev/null || true
+  pkill -9 -f 'mksnapshot' 2>/dev/null || true
+  pkill -9 -f 'gen-regexp' 2>/dev/null || true
+  pkill -9 -f 'bytecode_builtins' 2>/dev/null || true
+  sleep 5
   JOBS=1
 done
 if [ "$made" -ne 1 ]; then
