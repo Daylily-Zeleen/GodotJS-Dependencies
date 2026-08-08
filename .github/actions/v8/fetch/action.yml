@@ -69,10 +69,15 @@ runs:
         cat .gclient
 
         # --- checkout requested version + sync ---
+        # --nohooks: vpython hook fails on macos arm64 (numpy wheel missing from
+        # chrome-python-ar for that platform); hooks are not needed to build.
         cd v8
         git fetch origin refs/tags/${{ inputs.v8_version }}
         git checkout FETCH_HEAD
-        gclient sync -D --force --reset
+        gclient sync -D --force --reset --nohooks
+        # Best-effort runhooks: some generators need it, but never fail the build
+        # (vpython on macos arm64 can't fetch numpy==1.21.1+supported.1).
+        (gclient runhooks || true) 2>&1 | tail -20
 
     - name: Fetch v8 (windows)
       if: runner.os == 'Windows'
@@ -100,4 +105,4 @@ runs:
         cd v8
         call git fetch origin refs/tags/${{ inputs.v8_version }}
         call git checkout FETCH_HEAD
-        call gclient sync -D --force --reset
+        call gclient sync -D --force --reset --nohooks

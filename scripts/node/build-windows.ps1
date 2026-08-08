@@ -19,7 +19,21 @@ Set-Location node
 # Node ships vcbuild.bat which wraps configure + msbuild for the VS toolchain.
 # vcbuild.bat expects 'x64' (not 'x86_64'), so map the matrix arch first.
 $VcCpu = if ($DestCpu -eq "x86_64") { "x64" } else { $DestCpu }
-& ".\vcbuild.bat" $VcCpu release
+
+# node builds OpenSSL with assembly which requires NASM; install it if missing.
+if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
+  Write-Host "NASM not found, installing via choco..."
+  choco install nasm -y --no-progress
+  if ($LASTEXITCODE -ne 0) { Write-Warning "choco nasm failed ($LASTEXITCODE); falling back to openssl-no-asm" }
+  # refresh PATH so nasm is visible to vcbuild.bat
+  $env:Path = "C:\Program Files\NASM;" + $env:Path
+}
+if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
+  Write-Host "NASM still unavailable, building with openssl-no-asm"
+  & ".\vcbuild.bat" $VcCpu release openssl-no-asm
+} else {
+  & ".\vcbuild.bat" $VcCpu release
+}
 if ($LASTEXITCODE -ne 0) { throw "vcbuild.bat failed with exit code $LASTEXITCODE" }
 
 # --- Locate static library (path varies across versions) ---

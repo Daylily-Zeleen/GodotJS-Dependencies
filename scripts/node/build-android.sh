@@ -56,6 +56,7 @@ export CPPFLAGS="-D__ANDROID_API__=${ANDROID_API}"
   --dest-os=android \
   --dest-cpu="$DEST_CPU" \
   --cross-compiling \
+  --android-ndk="$NDK_ROOT" \
   --without-npm \
   --without-inspector \
   --without-report

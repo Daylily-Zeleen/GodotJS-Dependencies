@@ -29,6 +29,7 @@ export LDFLAGS="-isysroot ${SDK_PATH} -arch arm64"
   --dest-os=ios \
   --dest-cpu=arm64 \
   --cross-compiling \
+  --openssl-no-asm \
   --without-npm \
   --without-inspector \
   --without-report
