@@ -24,6 +24,8 @@ cd node
 export CC="${CLANG} -isysroot ${SDK_PATH} -arch arm64 -miphoneos-version-min=${IOS_DEPLOYMENT_TARGET}"
 export CXX="${CLANGPP} -isysroot ${SDK_PATH} -arch arm64 -miphoneos-version-min=${IOS_DEPLOYMENT_TARGET}"
 export LDFLAGS="-isysroot ${SDK_PATH} -arch arm64"
+# Apple clang defaults to C++14; node v24's bundled V8/abseil requires C++17
+export CXXFLAGS="-std=c++17"
 
 ./configure \
   --dest-os=ios \

@@ -7,7 +7,7 @@ set -euo pipefail
 NODE_BRANCH="${1:-v24.x}"
 DEST_CPU="${2:-arm64}"
 WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
-ANDROID_NDK_VERSION="${ANDROID_NDK_VERSION:-r25c}"  # r23c clang-12 can't parse target(armv8-a+aes+crc) in zlib crc32_simd
+ANDROID_NDK_VERSION="${ANDROID_NDK_VERSION:-r26b}"  # clang 17 supports target(armv8-a+aes+crc) in zlib crc32_simd (r23c=clang12/r25c=clang14 crash)
 ANDROID_API="${ANDROID_API:-28}"
 
 SUDO=""

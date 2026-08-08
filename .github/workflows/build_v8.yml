@@ -62,9 +62,8 @@ jobs:
             {"platform": "android", "arch": "arm64", "runner": "ubuntu-22.04", "target": "arm64.release", "staging": "android.arm64.release", "artifact": "prebuilt_v8_android_arm64"},
             {"platform": "android", "arch": "arm32", "runner": "ubuntu-22.04", "target": "arm.release", "staging": "android.arm32.release", "artifact": "prebuilt_v8_android_arm32"},
             {"platform": "android", "arch": "x86_64", "runner": "ubuntu-22.04", "target": "x64.release", "staging": "android.x86_64.release", "artifact": "prebuilt_v8_android_x86_64"},
-            # ios
+            # ios (x86_64 simulator dropped: Xcode 26 SDK no longer supports it)
             {"platform": "ios", "arch": "arm64", "runner": "macos-latest", "target": "arm64.release", "staging": "ios.arm64.release", "artifact": "prebuilt_v8_ios_arm64"},
-            {"platform": "ios", "arch": "x86_64", "runner": "macos-latest", "target": "x64.release", "staging": "ios.x86_64.release", "artifact": "prebuilt_v8_ios_x86_64"},
           ]
 
           # Parse platforms: entries can be "platform" (all arches) or "platform-arch" (e.g. linux-x86_64)
