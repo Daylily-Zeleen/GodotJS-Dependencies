@@ -42,14 +42,21 @@ fi
 echo "Found: $LIB"
 
 # --- Stage artifacts ---
-# node v24 has no top-level include/; generate headers via tools/install.py
-STAGE_DIR="$WORKSPACE/staging/node/linux_x86_64_release"
-mkdir -p "$STAGE_DIR"
-python3 tools/install.py install --headers-only --dest-dir "$STAGE_DIR" --prefix "/"
+# Layout mirrors moluopro/libnode releases: libnode/<platform>/<arch>/libnode.a
+# with one shared libnode/include/ (node header install flattened to include/).
+LIBDIR="$WORKSPACE/staging/libnode/linux/x64"
+HDRS="$WORKSPACE/staging/libnode/include"
+rm -rf "$HDRS"
+python3 tools/install.py install --headers-only --dest-dir "$HDRS" --prefix "/"
+# install.py lays headers out under include/node/; flatten to include/ so the
+# package matches the upstream libnode release layout.
+mv "$HDRS"/include/node/* "$HDRS"/
+rm -rf "$HDRS"/include
 if [ -f out/Release/config.gypi ]; then
-  cp out/Release/config.gypi "$STAGE_DIR/"
+  cp out/Release/config.gypi "$HDRS/"
 fi
-cp "$LIB" "$STAGE_DIR/"
+mkdir -p "$LIBDIR"
+cp "$LIB" "$LIBDIR/"
 
 echo "== staging layout =="
 find "$WORKSPACE/staging" -type f | sort

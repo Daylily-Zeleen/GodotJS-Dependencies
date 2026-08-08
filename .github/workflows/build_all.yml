@@ -89,8 +89,8 @@ jobs:
             echo "No lws artifacts, skipping lws bundle"
           fi
 
-          if [ -d staging/node ]; then
-            (cd staging && zip -r "node_${{ github.event.inputs.node_version }}.zip" node/)
+          if [ -d staging/libnode ]; then
+            (cd staging && zip -r "node_${{ github.event.inputs.node_version }}.zip" libnode/)
             echo "Created node bundle: staging/node_${{ github.event.inputs.node_version }}.zip"
           else
             echo "No node artifacts, skipping node bundle"

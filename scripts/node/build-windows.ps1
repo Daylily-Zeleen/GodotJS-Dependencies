@@ -49,16 +49,21 @@ if (-not $Lib) {
 Write-Host "Found: $($Lib.FullName)"
 
 # --- Stage artifacts ---
-# Follow repo convention: x64 -> x86_64
-$PlatformName = if ($VcCpu -eq "x64") { "x86_64" } else { $VcCpu }
-$StageDir = Join-Path $Workspace "staging/node/windows_${PlatformName}_release"
-New-Item -ItemType Directory -Force -Path $StageDir | Out-Null
-# node v24 has no top-level include/; generate headers via tools/install.py
-python tools/install.py install --headers-only --dest-dir $StageDir --prefix "/"
+# Layout mirrors moluopro/libnode releases: libnode/windows/x64/libnode.lib with
+# one shared libnode/include/ (node header install flattened to include/).
+$LibDir = Join-Path $Workspace "staging/libnode/windows/x64"
+$Hdrs = Join-Path $Workspace "staging/libnode/include"
+Remove-Item -Recurse -Force $Hdrs -ErrorAction SilentlyContinue
+python tools/install.py install --headers-only --dest-dir $Hdrs --prefix "/"
+# install.py lays headers out under include/node/; flatten to include/ so the
+# package matches the upstream libnode release layout.
+Get-ChildItem -Path (Join-Path $Hdrs "include\node") -Force | Move-Item -Destination $Hdrs
+Remove-Item -Recurse -Force (Join-Path $Hdrs "include")
 if (Test-Path "out/Release/config.gypi") {
-  Copy-Item -Force "out/Release/config.gypi" $StageDir
+  Copy-Item -Force "out/Release/config.gypi" $Hdrs
 }
-Copy-Item -Force $Lib.FullName $StageDir
+New-Item -ItemType Directory -Force -Path $LibDir | Out-Null
+Copy-Item -Force $Lib.FullName (Join-Path $LibDir "libnode.lib")
 
 Write-Host "== staging layout =="
 Get-ChildItem -Path (Join-Path $Workspace "staging") -Recurse -File | Select-Object -ExpandProperty FullName
