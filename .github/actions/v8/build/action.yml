@@ -79,7 +79,13 @@ runs:
         ninja -C "./out.gn/${{ inputs.target }}" $NINJA_JOBS v8_monolith
 
         # --- stage artifact ---
+        # The upstream godotjs v8 bundle ships v8/include/ (v8 public headers +
+        # cppgc/libplatform + js_protocol files); stage it from every unix job
+        # (identical content, deduped when artifacts are merged) so the release
+        # bundle matches the upstream layout.
         cd "$GITHUB_WORKSPACE"
+        mkdir -p "staging/v8/include"
+        cp -r "$GITHUB_WORKSPACE/v8/v8/include/." "staging/v8/include/"
         mkdir -p "staging/v8/${{ inputs.staging_dir }}"
         cp "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/obj/libv8_monolith.a" "staging/v8/${{ inputs.staging_dir }}/"
 
