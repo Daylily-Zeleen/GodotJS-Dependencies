@@ -38,6 +38,13 @@ export CXXFLAGS="-std=c++20"
   --without-npm \
   --without-inspector \
   --without-report
+
+# c-ares ships a macOS config (config/darwin/ares_config.h) which defines
+# HAVE_SYS_RANDOM_H - that header exists on macOS but NOT on iOS. Undefine it
+# so ares_rand.c falls back to arc4random_buf (available on iOS).
+sed -i.bak 's/^#define HAVE_SYS_RANDOM_H 1/\/\* #undef HAVE_SYS_RANDOM_H *\//' \
+  deps/cares/config/darwin/ares_config.h
+
 make -j"$(sysctl -n hw.ncpu || echo 4)"
 
 # --- Locate static library (path varies across versions) ---
