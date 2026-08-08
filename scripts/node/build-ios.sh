@@ -97,18 +97,21 @@ fi
 # usually safe but the OOM is flaky, so retry: gyp's make is incremental, so
 # after a killed job the retry only re-runs the remaining targets with much
 # lower memory pressure (icupkg runs almost alone).
+# macos-latest runners are Apple Silicon with only 7 GB RAM. node's iOS build
+# (V8 host tools torque/genccode/bytecode_builtins + target compiles) OOMs the
+# runner under any parallelism, and even a single host tool can die if memory is
+# left fragmented by a previous attempt. Build strictly single-threaded (-j1)
+# and aggressively kill ALL leftover build processes between retries (anything
+# under out/Release, plus the compiler drivers and cc1 subprocesses).
 made=0
-JOBS=2
 for i in 1 2 3; do
-  echo "=== make attempt $i (jobs=$JOBS) ==="
-  if make -C out BUILDTYPE=Release node -j"$JOBS"; then
+  echo "=== make attempt $i (jobs=1) ==="
+  if make -C out BUILDTYPE=Release node -j1; then
     made=1
     break
   fi
   echo "attempt $i failed (exit $?); killing leftover build procs and retrying"
-  # When a parallel make dies (OOM Error 137 on icupkg), sibling clang/icupkg
-  # child processes can be left running and keep consuming memory, starving the
-  # retry (observed: -j1 retries die in ~1s). Kill leftovers before retrying.
+  pkill -9 -f 'out/Release' 2>/dev/null || true
   pkill -9 -f 'clang' 2>/dev/null || true
   pkill -9 -f 'cc1' 2>/dev/null || true
   pkill -9 -f 'icupkg' 2>/dev/null || true
@@ -117,8 +120,9 @@ for i in 1 2 3; do
   pkill -9 -f 'mksnapshot' 2>/dev/null || true
   pkill -9 -f 'gen-regexp' 2>/dev/null || true
   pkill -9 -f 'bytecode_builtins' 2>/dev/null || true
-  sleep 5
-  JOBS=1
+  pkill -9 -f 'cctz' 2>/dev/null || true
+  pkill -9 -f 'gyp-mac-tool' 2>/dev/null || true
+  sleep 8
 done
 if [ "$made" -ne 1 ]; then
   echo "node make failed after 3 attempts" >&2

@@ -83,7 +83,8 @@ for i in 1 2 3; do
   echo "attempt $i failed (exit $?); killing leftover build procs and retrying"
   # A clang frontend crash (exit 139, e.g. json-stringifier.cc) under peak
   # memory can leave sibling build processes behind. Kill leftovers before
-  # retrying so the lower-parallelism retry has real headroom.
+  # retrying and drop parallelism hard on each retry.
+  pkill -9 -f 'out/Release' 2>/dev/null || true
   pkill -9 -f 'clang' 2>/dev/null || true
   pkill -9 -f 'cc1' 2>/dev/null || true
   pkill -9 -f 'icupkg' 2>/dev/null || true
@@ -91,7 +92,7 @@ for i in 1 2 3; do
   pkill -9 -f 'genccode' 2>/dev/null || true
   pkill -9 -f 'node_js2c' 2>/dev/null || true
   sleep 5
-  JOBS=2
+  JOBS=1
 done
 if [ "$made" -ne 1 ]; then
   echo "node make failed after 3 attempts" >&2
