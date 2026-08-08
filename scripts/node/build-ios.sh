@@ -57,6 +57,14 @@ sed -i.bak 's/^#define HAVE_SYS_RANDOM_H 1/\/\* #undef HAVE_SYS_RANDOM_H *\//' \
 # overlapped-checker) that fail to link on iOS (gyp adds GNU ld --start-group
 # which Apple ld64 rejects). configure only writes out/Makefile; the
 # out/Release/ dir is created by gyp during the build, so pass BUILDTYPE.
+# node configure sets gyp flavor to 'ios', which gyp's make generator does not
+# recognize, so it falls back to LINK_COMMANDS_LINUX which embeds GNU-ld-only
+# -Wl,--start-group/--end-group. Apple's ld64 rejects those flags (host tools
+# like node_js2c/genccode fail to link). Strip them from the generated
+# makefiles (gyp itself strips them for wasm builds the same way).
+find out -name 'Makefile' -o -name '*.mk' | while read -r mf; do
+  sed -i.bak -e 's/ -Wl,--start-group//g' -e 's/ -Wl,--end-group//g' "$mf"
+done
 make -C out BUILDTYPE=Release node -j"$(sysctl -n hw.ncpu || echo 4)"
 
 # --- Locate static library (path varies across versions) ---
