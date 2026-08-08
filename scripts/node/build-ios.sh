@@ -22,9 +22,12 @@ fi
 # --- Configure & build with iOS cross toolchain ---
 cd node
 export CC="${CLANG} -isysroot ${SDK_PATH} -arch arm64 -miphoneos-version-min=${IOS_DEPLOYMENT_TARGET}"
-export CXX="${CLANGPP} -isysroot ${SDK_PATH} -arch arm64 -miphoneos-version-min=${IOS_DEPLOYMENT_TARGET}"
+# Apple clang defaults to C++14; node v24 needs C++20 (abseil + ncrypto
+# operator<=>). Put -std=c++20 in CXX itself so gyp's HOST targets
+# (obj.host: mksnapshot/abseil) inherit it too - CXXFLAGS only reaches
+# obj.target targets.
+export CXX="${CLANGPP} -isysroot ${SDK_PATH} -arch arm64 -miphoneos-version-min=${IOS_DEPLOYMENT_TARGET} -std=c++20"
 export LDFLAGS="-isysroot ${SDK_PATH} -arch arm64"
-# Apple clang defaults to C++14; node v24 needs C++20 (abseil + ncrypto operator<=>)
 export CXXFLAGS="-std=c++20"
 
 ./configure \
