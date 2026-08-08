@@ -53,6 +53,13 @@ export CC_host="${CC_host:-gcc-12}"
 export CXX_host="${CXX_host:-g++-12}"
 export AR_host="${AR_host:-ar}"
 
+# node.gypi unconditionally adds the openssl-cli test tool as a dependency of
+# libnode (node_use_openssl && !node_shared_openssl). On Android it cannot
+# link: it pulls in zlib's cpu_features.o which references android_getCpuFeatures
+# (NDK cpufeatures lib that gyp never links). We don't need this test binary,
+# so drop it BEFORE configure (gyp reads the gypi at configure time).
+sed -i.bak '/openssl.gyp:openssl-cli/d' node.gypi
+
 # node v24 android builds are driven by ./android-configure (sets GYP_DEFINES
 # android_ndk_path). Usage: android-configure <ndk_path> <api> <arch>
 ./android-configure "$NDK_ROOT" "$ANDROID_API" "$NDK_ARCH"

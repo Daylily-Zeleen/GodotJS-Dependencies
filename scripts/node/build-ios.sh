@@ -21,6 +21,13 @@ fi
 
 # --- Configure & build with iOS cross toolchain ---
 cd node
+
+# node.gypi unconditionally adds the openssl-cli test tool as a dependency of
+# libnode (node_use_openssl && !node_shared_openssl). On iOS it cannot link:
+# gyp emits GNU ld flags (--start-group/--end-group) that Apple ld64 rejects.
+# We don't need this test binary, so drop it BEFORE configure (gyp reads the
+# gypi at configure time to generate the Makefiles).
+sed -i.bak '/openssl.gyp:openssl-cli/d' node.gypi
 export CC="${CLANG} -isysroot ${SDK_PATH} -arch arm64 -miphoneos-version-min=${IOS_DEPLOYMENT_TARGET}"
 # Apple clang defaults to C++14; node v24 needs C++20 (abseil + ncrypto
 # operator<=>). Put -std=c++20 in CXX itself so gyp's HOST targets
