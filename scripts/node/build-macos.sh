@@ -26,7 +26,34 @@ cd node
   --without-npm \
   --without-inspector \
   --without-report
-make -j"$(sysctl -n hw.ncpu || echo 4)"
+# macos-latest is an M1 runner with only 7GB RAM; V8 host tools
+# (mksnapshot/torque) are memory-hungry and full ncpu parallelism can OOM
+# them. gyp's make is incremental, so on failure kill leftover build procs
+# and retry at -j1 - the retry only compiles the remaining files under much
+# lower memory pressure (same pattern as the android/ios scripts).
+made=0
+JOBS="$(sysctl -n hw.ncpu || echo 4)"
+for i in 1 2 3; do
+  echo "=== make attempt $i (jobs=$JOBS) ==="
+  if make -j"$JOBS"; then
+    made=1
+    break
+  fi
+  echo "attempt $i failed (exit $?); killing leftover build procs and retrying"
+  pkill -9 -f 'out/Release' 2>/dev/null || true
+  pkill -9 -f 'clang' 2>/dev/null || true
+  pkill -9 -f 'cc1' 2>/dev/null || true
+  pkill -9 -f 'icupkg' 2>/dev/null || true
+  pkill -9 -f 'mksnapshot' 2>/dev/null || true
+  pkill -9 -f 'genccode' 2>/dev/null || true
+  pkill -9 -f 'node_js2c' 2>/dev/null || true
+  sleep 8
+  JOBS=1
+done
+if [ "$made" -ne 1 ]; then
+  echo "node make failed after 3 attempts" >&2
+  exit 1
+fi
 
 # --- Locate static library (path varies across versions) ---
 LIB="$(find out -name 'libnode.a' -print -quit)"

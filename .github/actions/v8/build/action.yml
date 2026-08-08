@@ -40,6 +40,12 @@ runs:
         fi
 
         # --- sysroot for cross arch ---
+        # NB: linux arm64 does NOT install a sysroot here: the chromium bullseye
+        # sysroot ships GCC 10 libstdc++ which lacks C++20 make_unique_for_overwrite
+        # (V8 13.x requirement), so all linux builds use use_sysroot=false and rely
+        # on host/cross gcc-12 headers instead (cross gcc-12-aarch64-linux-gnu is
+        # installed by the fetch action). Installing the sysroot here would be dead
+        # weight on top of that.
         if [ "${{ inputs.platform }}" = "android" ]; then
           case "${{ inputs.arch }}" in
             arm64) SYSROOT_ARCH=arm64 ;;
@@ -47,8 +53,6 @@ runs:
             x86_64) SYSROOT_ARCH=x64 ;;
           esac
           python ./build/linux/sysroot_scripts/install-sysroot.py --arch=${SYSROOT_ARCH}
-        elif [ "${{ inputs.platform }}" = "linux" ] && [ "${{ inputs.arch }}" = "arm64" ]; then
-          python ./build/linux/sysroot_scripts/install-sysroot.py --arch=arm64
         fi
 
         # --- generate + configure + build ---
@@ -65,7 +69,14 @@ runs:
         fi
         cat "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/args.gn"
         ls -l "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/"
-        ninja -C "./out.gn/${{ inputs.target }}" v8_monolith
+        # macos/ios run on macos-latest (M1, 7GB RAM - same constraint the node
+        # build scripts were hardened against). V8 monolith compiles are memory
+        # hungry; cap ninja jobs there to avoid OOM-killing the whole build.
+        NINJA_JOBS=""
+        if [ "${{ inputs.platform }}" = "macos" ] || [ "${{ inputs.platform }}" = "ios" ]; then
+          NINJA_JOBS="-j2"
+        fi
+        ninja -C "./out.gn/${{ inputs.target }}" $NINJA_JOBS v8_monolith
 
         # --- stage artifact ---
         cd "$GITHUB_WORKSPACE"

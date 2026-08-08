@@ -32,6 +32,15 @@ runs:
         # --- V8 13.x needs C++20 (std::make_unique_for_overwrite): use gcc-12 ---
         if [ "${{ inputs.platform }}" = "linux" ]; then
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc-12 g++-12
+          # Cross-compiling for linux arm64 with use_sysroot=false (see build
+          # action) relies on clang's GCC-installation detection to find the
+          # target headers/libstdc++: the bullseye sysroot's GCC 10 libstdc++
+          # lacks C++20 make_unique_for_overwrite, so instead of the sysroot we
+          # provide the cross gcc-12 (GCC 12 libstdc++ has C++20) whose headers
+          # live under /usr/aarch64-linux-gnu.
+          if [ "${{ inputs.arch }}" = "arm64" ]; then
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc-12-aarch64-linux-gnu g++-12-aarch64-linux-gnu
+          fi
         fi
 
         cd "$GITHUB_WORKSPACE"

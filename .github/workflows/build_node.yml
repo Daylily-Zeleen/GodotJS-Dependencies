@@ -106,6 +106,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       NODE_VERSION: ${{ inputs.node_version || github.event.inputs.node_version }}
+      # setup job gates the ohos combo on these vars; the build job must see
+      # them too or build-ohos.sh fails with 'OHOS_NATIVE_HOME is not set'.
+      OHOS_NATIVE_HOME: ${{ vars.OHOS_NATIVE_HOME }}
+      OHOS_SDK_URL: ${{ vars.OHOS_SDK_URL }}
     strategy:
       fail-fast: false
       matrix:

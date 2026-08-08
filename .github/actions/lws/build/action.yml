@@ -90,7 +90,10 @@ runs:
         # LWS_WITH_EVENT_LIBS=ON is required on Windows: pollfd.c declares 'vpt'
         # only when LWS_WITH_EVENT_LIBS is undefined AND not WIN32, but still uses
         # it under the poll() path, so without event libs MSVC hits C2065 'vpt'.
-        cmake -G "Visual Studio 17 2022" -A x64 `
+        # windows-2022 images ship the ARM64/ARM64EC MSVC toolsets, so the arm64
+        # matrix combo must select -A arm64 (was hardcoded to x64 before, which
+        # silently produced x64 binaries labeled as arm64).
+        cmake -G "Visual Studio 17 2022" -A ${{ inputs.arch == 'arm64' && 'arm64' || 'x64' }} `
           -DLWS_WITH_SHARED=OFF `
           -DLWS_WITH_SSL=0 `
           -DLWS_WITH_EVENT_LIBS=ON `
