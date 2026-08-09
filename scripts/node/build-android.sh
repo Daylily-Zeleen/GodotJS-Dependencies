@@ -60,6 +60,45 @@ export AR_host="${AR_host:-ar}"
 # so drop it BEFORE configure (gyp reads the gypi at configure time).
 sed -i.bak '/openssl.gyp:openssl-cli/d' node.gypi
 
+# v8.gyp (tools/v8_gypfiles) adds the wasm trap-handler sources
+# (handler-inside-posix.cc / handler-outside-posix.cc) and the simulator probe
+# helper (handler-outside-simulator.cc) to v8_base_without_compiler only under
+# OS in "linux mac ios openharmony" / "linux mac win openharmony" (upstream
+# riscv64/loong64 fix, nodejs/node#52888). OS=="android" is missing, so when
+# cross-compiling for Android arm64 the host mksnapshot (built under the arm64
+# simulator on x64) links v8_base_without_compiler WITHOUT those objects and
+# fails with undefined references to trap_handler::TryHandleSignal /
+# RegisterDefaultTrapHandler and v8_internal_simulator_ProbeMemory. Patch the
+# OS lists to include android BEFORE configure (gyp reads v8.gyp to emit the
+# Makefiles). Exact-string replacements; each pattern appears only in the
+# arm64 blocks (both the .cc sources and the v8_internal_headers .h lists).
+python3 - <<'PY'
+import io
+
+path = 'tools/v8_gypfiles/v8.gyp'
+with io.open(path, encoding='utf-8') as f:
+    s = f.read()
+
+repls = [
+    ('and (OS in "linux mac ios openharmony")',
+     'and (OS in "linux mac ios openharmony android")'),
+    ('and (OS in "linux mac openharmony")',
+     'and (OS in "linux mac openharmony android")'),
+    ('and (OS in "linux mac win openharmony")',
+     'and (OS in "linux mac win openharmony android")'),
+]
+for old, new in repls:
+    n = s.count(old)
+    if n == 0:
+        print('WARNING: v8.gyp pattern not found: %s' % old)
+    else:
+        print('v8.gyp: patched %d occurrence(s) of %s' % (n, old))
+    s = s.replace(old, new)
+
+with io.open(path, 'w', encoding='utf-8') as f:
+    f.write(s)
+PY
+
 # node v24 android builds are driven by ./android-configure (sets GYP_DEFINES
 # android_ndk_path). Usage: android-configure <ndk_path> <api> <arch>
 ./android-configure "$NDK_ROOT" "$ANDROID_API" "$NDK_ARCH"
