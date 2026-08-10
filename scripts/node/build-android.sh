@@ -54,11 +54,88 @@ export CXX_host="${CXX_host:-g++-12}"
 export AR_host="${AR_host:-ar}"
 
 # node.gypi unconditionally adds the openssl-cli test tool as a dependency of
-# libnode (node_use_openssl && !node_shared_openssl). On Android it cannot
-# link: it pulls in zlib's cpu_features.o which references android_getCpuFeatures
-# (NDK cpufeatures lib that gyp never links). We don't need this test binary,
-# so drop it BEFORE configure (gyp reads the gypi at configure time).
+# libnode (node_use_openssl && !node_shared_openssl). On Android it is not
+# needed for the embedded static library and older Node/gyp combinations try
+# to link it without the NDK cpufeatures implementation, so drop it BEFORE
+# configure (gyp reads the gypi at configure time).
 sed -i.bak '/openssl.gyp:openssl-cli/d' node.gypi
+
+# Node's bundled zlib still uses the removed NDK cpu-features library on
+# Android. NDK r26b no longer ships <cpu-features.h> / android_getCpuFeatures;
+# use the supported getauxval() HWCAP interface instead. Patch the fetched
+# Node source before configure so gyp compiles the same runtime feature
+# detection for arm64 and arm32 without an extra library.
+python3 - <<'PY'
+from pathlib import Path
+
+path = Path('deps/zlib/cpu_features.c')
+s = path.read_text(encoding='utf-8')
+
+old_include = '''#if defined(ARMV8_OS_ANDROID)
+#include <cpu-features.h>
+#elif defined(ARMV8_OS_LINUX)'''
+new_include = '''#if defined(ARMV8_OS_ANDROID)
+#include <asm/hwcap.h>
+#include <sys/auxv.h>
+#elif defined(ARMV8_OS_LINUX)'''
+
+old_android = '''#if defined(ARMV8_OS_ANDROID) && defined(__aarch64__)
+    uint64_t features = android_getCpuFeatures();
+    arm_cpu_enable_crc32 = !!(features & ANDROID_CPU_ARM64_FEATURE_CRC32);
+    arm_cpu_enable_pmull = !!(features & ANDROID_CPU_ARM64_FEATURE_PMULL);
+#elif defined(ARMV8_OS_ANDROID) /* aarch32 */
+    uint64_t features = android_getCpuFeatures();
+    arm_cpu_enable_crc32 = !!(features & ANDROID_CPU_ARM_FEATURE_CRC32);
+    arm_cpu_enable_pmull = !!(features & ANDROID_CPU_ARM_FEATURE_PMULL);
+#elif defined(ARMV8_OS_LINUX) && defined(__aarch64__)'''
+new_android = '''#if defined(ARMV8_OS_ANDROID) && defined(__aarch64__)
+    unsigned long features = getauxval(AT_HWCAP);
+#if defined(HWCAP_CRC32)
+    arm_cpu_enable_crc32 = !!(features & HWCAP_CRC32);
+#else
+    arm_cpu_enable_crc32 = 0;
+#endif
+#if defined(HWCAP_PMULL)
+    arm_cpu_enable_pmull = !!(features & HWCAP_PMULL);
+#else
+    arm_cpu_enable_pmull = 0;
+#endif
+#elif defined(ARMV8_OS_ANDROID) /* aarch32 */
+#if defined(AT_HWCAP2)
+    unsigned long features = getauxval(AT_HWCAP2);
+#else
+    unsigned long features = 0;
+#endif
+#if defined(HWCAP2_CRC32)
+    arm_cpu_enable_crc32 = !!(features & HWCAP2_CRC32);
+#else
+    arm_cpu_enable_crc32 = 0;
+#endif
+#if defined(HWCAP2_PMULL)
+    arm_cpu_enable_pmull = !!(features & HWCAP2_PMULL);
+#else
+    arm_cpu_enable_pmull = 0;
+#endif
+#elif defined(ARMV8_OS_LINUX) && defined(__aarch64__)'''
+
+if 'android_getCpuFeatures();' not in s and '#include <cpu-features.h>' not in s:
+    print('zlib cpu feature detection already uses a supported Android API')
+else:
+    if old_include not in s or old_android not in s:
+        raise SystemExit('ERROR: unsupported Node zlib cpu_features.c layout; refusing an unverified Android patch')
+    s = s.replace(old_include, new_include, 1)
+    s = s.replace(old_android, new_android, 1)
+    if 'android_getCpuFeatures();' in s or '#include <cpu-features.h>' in s:
+        raise SystemExit('ERROR: obsolete Android cpu-features implementation remains after patch')
+    path.write_text(s, encoding='utf-8')
+    print('zlib cpu_features.c: replaced NDK cpu-features with getauxval HWCAP detection')
+
+# Keep this workaround auditable: the build must not continue if the expected
+# obsolete API is still present after a supposedly successful patch.
+patched = path.read_text(encoding='utf-8')
+if '#include <cpu-features.h>' in patched or 'android_getCpuFeatures();' in patched:
+    raise SystemExit('ERROR: obsolete Android cpu-features implementation remains')
+PY
 
 # v8.gyp (tools/v8_gypfiles) adds the wasm trap-handler sources
 # (handler-inside-posix.cc / handler-outside-posix.cc) and the simulator probe
