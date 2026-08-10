@@ -99,6 +99,38 @@ with io.open(path, 'w', encoding='utf-8') as f:
     f.write(s)
 PY
 
+# NDK r26b ships clang 17.0.2, which SIGSEGVs deterministically in
+# Sema::ActOnAttributedStmt when parsing an attributed statement
+# (V8_INLINE_STATEMENT == [[clang::always_inline]]) that directly follows a
+# 'case' label, as used by FastJsonStringifier::SerializeObjectKey in
+# deps/v8/src/json/json-stringifier.cc. The same file compiles fine with the
+# host gcc-12 and with Apple clang on iOS. V8_INLINE_STATEMENT is only a
+# performance hint (force-inline for a type-switch dispatcher), so removing it
+# is semantics-neutral. The macro is defined in objects/string-inl.h and used
+# only by json-stringifier.cc; other TUs that parse the same macro under case
+# labels (e.g. String::VisitStringTypedDispatch) compile fine, so we only
+# patch this one file.
+python3 - <<'PY'
+import io
+
+path = 'deps/v8/src/json/json-stringifier.cc'
+with io.open(path, encoding='utf-8') as f:
+    s = f.read()
+
+old = 'V8_INLINE_STATEMENT '
+n = s.count(old)
+if n == 0:
+    print('WARNING: V8_INLINE_STATEMENT not found in json-stringifier.cc '
+          '(node bumped v8 and the pattern moved?) - skipping clang-17 crash patch')
+else:
+    print('json-stringifier.cc: removed %d V8_INLINE_STATEMENT statement attribute(s) '
+          '(NDK r26b clang-17 ActOnAttributedStmt crash workaround)' % n)
+s = s.replace(old, '')
+
+with io.open(path, 'w', encoding='utf-8') as f:
+    f.write(s)
+PY
+
 # node v24 android builds are driven by ./android-configure (sets GYP_DEFINES
 # android_ndk_path). Usage: android-configure <ndk_path> <api> <arch>
 ./android-configure "$NDK_ROOT" "$ANDROID_API" "$NDK_ARCH"
