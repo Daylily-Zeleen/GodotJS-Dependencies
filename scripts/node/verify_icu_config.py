@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import re
+import ast
 from pathlib import Path
 
 
@@ -26,13 +26,28 @@ def main() -> int:
     if not args.path.is_file():
         fail(f"missing generated configuration: {args.path}")
     text = args.path.read_text(encoding="utf-8")
-    if not re.search(r"['\"]icu_small['\"]\s*:\s*['\"]true['\"]", text):
+    start = text.find("{")
+    if start < 0:
+        fail("generated configuration is not a dictionary")
+    try:
+        expression = ast.parse(text[start:], mode="eval")
+        config = ast.literal_eval(expression.body)
+    except (SyntaxError, ValueError) as exc:
+        fail(f"cannot parse generated GYP configuration: {exc}")
+    if not isinstance(config, dict):
+        fail("generated configuration is not a dictionary")
+    variables = config.get("variables")
+    if not isinstance(variables, dict):
+        fail("generated configuration has no variables dictionary")
+    if str(variables.get("icu_small", "")).lower() != "true":
         fail("icu_small is not enabled; the build is not small-icu")
-    match = re.search(r"['\"]icu_locales['\"]\s*:\s*['\"]([^'\"]*)['\"]", text)
-    if not match:
+    locales = variables.get("icu_locales")
+    if not isinstance(locales, str):
         fail("icu_locales is missing")
-    actual = tuple(match.group(1).split(","))
-    if actual != tuple(sorted(LOCALES)):
+    actual = tuple(item for item in locales.split(",") if item)
+    # Node configure.py canonicalizes this set alphabetically and always adds
+    # root, so validate exact membership rather than caller argument order.
+    if set(actual) != set(LOCALES) or len(actual) != len(LOCALES):
         fail(f"icu_locales does not match {PROFILE_NAME}: {actual}")
     print(f"ICU configuration passed: {PROFILE_NAME}")
     return 0

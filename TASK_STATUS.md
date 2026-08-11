@@ -20,7 +20,7 @@
 - [x] 新增 `scripts/expected_platforms.py`，按 LWS/V8/Node 独立矩阵、用户选择、跳过 Apple/Windows 和 OHOS 可用性生成严格期望集合。
 - [x] 修复 `expected_platforms.py` 无效平台分支的 NameError，并验证 fail-closed 错误路径。
 - [x] `build_all` 已改为按组件分流平台输入，并在发布前按实际启用组件强制验证 staging 根目录和严格平台集合。
-- [x] `apply_icu_profile.sh` 已严格要求恰好移除一个 `--delete-tmp`，并使用兼容 macOS/BSD 的 `sed -i.bak`。
+- [x] `apply_icu_profile.sh` 已修复为严格要求并移除 Node v22.x-v24.x 中两个 `--delete-tmp` action。
 - [x] ICU 数据验证检查全部 19 个 selected locale、拒绝其它 `lang/*.res`，并允许禁用 delete-tmp 后预期共存的 `icutmp/icudt*.dat` 与 `icutmp/icusmdt*.dat`。
 - [x] 统一 LWS/V8/Node workflow 的 Windows 架构输入别名。
 - [x] Windows 构建固定执行 Python setup，校验 canonical ICU profile，并使用无 BOM UTF-8 写回 gyp 文件。
@@ -30,18 +30,20 @@
 - [x] 所有 Node Shell 脚本通过 `bash -n`，YAML 结构解析通过，`git diff --check` 通过。
 - [x] 修复 Node release 二次校验在删除 CI-only `node-commit.txt` 后仍强制要求 commit marker、导致发布必然失败的问题。
 - [x] 修复显式混合平台请求被 `SKIP_APPLE`/`SKIP_WINDOWS` 静默删减、可能造成部分矩阵假通过的问题。
-- [x] 将本轮 CI 修复提交并推送到 fork 的 `main`：`cbeedd698059c8693af637c7ce1597803693be8b`。
+- [x] 将本轮 CI 修复提交并推送到 fork 的 `main`：首个提交 `cbeedd698059c8693af637c7ce1597803693be8b`，后续 ICU patch 提交 `685106808b42da39839a8e374f13ec187eb9f609`。
 - [x] LWS Linux smoke run `31462169259` 成功。
 - [ ] V8 Linux smoke run `31462172647` 仍在运行。
-- [x] 定位 Node Linux smoke run `31462175815` 失败根因：Node v22.x-v24.x 的 `icu-generic.gyp` 有两个平台特定 `--delete-tmp` action，脚本错误要求一个。
-- [x] 将 POSIX/Windows ICU patch 改为严格要求并移除两个 `--delete-tmp` action。
-- [ ] 重新推送 Node 修复并复跑失败 workflow。
+- [x] 修复 Node Linux smoke run `31462175815` 的两个 `--delete-tmp` 根因并重新推送提交 `685106808b42da39839a8e374f13ec187eb9f609`。
+- [x] Node 重跑 `31462904547` 已确认 ICU trim patch 通过，但旧验证器无法解析生成的 `icu_config.gypi` 表示。
+- [x] 将 `verify_icu_config.py` 改为安全解析 Node GYP 字典，兼容官方 `icu_small='true'` 表示和 Node 对 locale 的规范化排序；正向/负向测试均通过。
+- [ ] 推送配置验证修复并复跑 Node smoke；V8 smoke `31462172647` 仍在运行。
 
 ## 已确认风险
 
-1. Node CI 已证明首版 ICU GYP 修改假设不适用于当前 Node v24.x：实际有两个 `--delete-tmp` 参数。
-2. Node small-ICU 数据校验依赖构建保留的 `icusmdt*.dat` 或 `icutmp/icudt*.dat`；如果 Node 上游改变生成路径，脚本会 fail closed。
-3. YAML 专用 lint 工具当前未安装；本地已用 PyYAML 做结构检查，并依赖 GitHub Actions 实际解析。
+1. Node v22.x-v24.x 公开 GYP 有两个平台特定 `--delete-tmp` action，已按实际源码严格处理。
+2. Node 的 small-icu 构建参数已通过命令行传递；上次失败实际是验证器无法解析生成的 GYP 配置表示，已改为 AST 解析，等待远端复跑确认。原风险记录：必须修复参数传递后才能验证 small-icu 数据。
+3. Node small-ICU 数据校验依赖构建保留的 `icusmdt*.dat` 或 `icutmp/icudt*.dat`；如果 Node 上游改变生成路径，脚本会 fail closed。
+4. YAML 专用 lint 工具当前未安装；本地已用 PyYAML 做结构检查，并依赖 GitHub Actions 实际解析。
 
 ## 最近验证
 
@@ -52,4 +54,4 @@
 - `bash -n scripts/node/*.sh`: 通过。
 - PyYAML workflow/action 结构解析：通过。
 - `git diff --check`: 通过。
-- GitHub Actions：LWS smoke 已成功；V8 smoke 仍在运行；Node smoke 已失败并进入修复。
+- GitHub Actions：LWS smoke 成功；V8 smoke 仍在运行；Node ICU trim 已通过，但 Node 未生成 small-icu，进入参数修复。
