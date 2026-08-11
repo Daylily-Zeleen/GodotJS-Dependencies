@@ -14,6 +14,10 @@ SELECTED = (
     "zh_Hant", "zh_Hant_HK", "zh_Hant_TW",
 )
 
+# icutrim rebuilds res_index.res for every trimmed resource tree (lang/region/
+# curr/...); it is a per-tree index, not a locale resource.
+NON_LOCALE_RES = {"res_index"}
+
 
 def fail(message: str) -> "NoReturn":
     raise SystemExit(f"ICU data error: {message}")
@@ -25,34 +29,41 @@ def main() -> int:
     args = parser.parse_args()
 
     all_dat_files = sorted(args.root.rglob("*.dat"))
-    final_files = [path for path in all_dat_files if path.name.startswith("icusmdt")]
+    # icutrim writes the trimmed archive as icutmp/icudt<ver><endian>.dat; the
+    # item names inside keep that prefix, so icupkg can list it directly.
     tmp_files = [
         path for path in all_dat_files
         if path.parent.name == "icutmp" and path.name.startswith("icudt")
     ]
-    # Non-Windows GYP normally leaves both the trimmed input
-    # (icutmp/icudt*.dat) and the renamed final archive (icutmp/icusmdt*.dat)
-    # when --delete-tmp is disabled. Windows may leave only the former.
-    if len(final_files) == 1:
-        archive = final_files[0]
-        allowed = set(final_files + tmp_files)
-        if not tmp_files or any(path.parent != archive.parent for path in tmp_files):
-            fail(f"small-ICU temporary/final archives are ambiguous: {all_dat_files}")
-    elif not final_files and len(tmp_files) == 1:
-        archive = tmp_files[0]
-        allowed = set(tmp_files)
-    else:
-        fail(f"expected one small-ICU final archive, found {all_dat_files}")
+    # The genccode step additionally copies the trimmed archive to a
+    # icusmdt<ver>.dat name (POSIX only) purely to name the embedded C/asm
+    # entry; the copy keeps the original icudt<ver><endian>/ item prefix, so
+    # icupkg refuses to list it. It must be byte-identical to the archive.
+    final_files = [
+        path for path in all_dat_files if path.name.startswith("icusmdt")
+    ]
+
+    if not tmp_files:
+        fail(f"no small-ICU trimmed archive found in icutmp: {all_dat_files}")
+    if len(tmp_files) > 1:
+        fail(f"multiple small-ICU trimmed archives: {tmp_files}")
+    archive = tmp_files[0]
+
+    allowed = set(tmp_files + final_files)
     unexpected_dat = sorted(set(all_dat_files) - allowed)
     if unexpected_dat:
         fail(f"unexpected or stale ICU .dat files: {unexpected_dat}")
+
+    for final_path in final_files:
+        if final_path.read_bytes() != archive.read_bytes():
+            fail(f"final archive diverges from trimmed archive: {final_path}")
+
     tools = sorted(
         path for path in args.root.rglob("icupkg*")
         if path.is_file() and path.suffix.lower() in ("", ".exe")
     )
     if not tools:
         fail(f"no host icupkg tool found below {args.root}")
-
     tool = tools[0]
     result = subprocess.run(
         [str(tool), "-l", str(archive)],
@@ -66,10 +77,10 @@ def main() -> int:
         fail(f"icupkg could not list {archive}: {result.stderr.strip()}")
     listing = result.stdout
     for locale in SELECTED:
-        if not re.search(rf"(?:^|[/\\\\])lang[/\\\\]{re.escape(locale)}\.res(?:$|\s)", listing, re.MULTILINE):
+        if not re.search(rf"(?:^|[/\\])lang[/\\]{re.escape(locale)}\.res(?:$|\s)", listing, re.MULTILINE):
             fail(f"selected locale data is missing: lang/{locale}.res")
-    locale_entries = set(re.findall(r"(?:^|[/\\\\])lang[/\\\\]([^/\\\\\s]+)\.res(?:$|\s)", listing, re.MULTILINE))
-    unexpected = sorted(locale_entries - set(SELECTED))
+    locale_entries = set(re.findall(r"(?:^|[/\\])lang[/\\]([^/\\\s]+)\.res(?:$|\s)", listing, re.MULTILINE))
+    unexpected = sorted(locale_entries - set(SELECTED) - NON_LOCALE_RES)
     if unexpected:
         fail(f"unselected locale data is present: {unexpected}")
     print(f"ICU data passed: {archive}")
