@@ -29,6 +29,35 @@ if ($deleteTmpMatches.Count -ne 2) { throw "Expected exactly two ICU --delete-tm
 $gypText = $gypText -replace "'--delete-tmp',", " "
 [IO.File]::WriteAllText($IcuGyp, $gypText, [Text.UTF8Encoding]::new($false))
 if ((Get-Content -Raw $IcuGyp) -match '--delete-tmp') { throw "Failed to disable ICU temporary-data deletion" }
+$IcuTrim = Join-Path (Get-Location) "tools/icu/icutrim.py"
+if (-not (Test-Path $IcuTrim)) { throw "Missing ICU trim tool: $IcuTrim" }
+$trimText = Get-Content -Raw $IcuTrim
+# Normalize line endings before the exact source patch so Windows CRLF and
+# upstream LF files are handled identically; write the patched Python as LF.
+$trimText = $trimText -replace "`r`n", "`n"
+$oldTrimGuard = @'
+if not (os.path.isdir(options.tmpdir)):
+    os.mkdir(options.tmpdir)
+else:
+    print("Please delete tmpdir %s before beginning." % options.tmpdir)
+    sys.exit(1)
+'@
+$oldTrimGuard = $oldTrimGuard -replace "`r`n", "`n"
+$newTrimGuard = @'
+if os.path.isdir(options.tmpdir):
+    if os.listdir(options.tmpdir):
+        print("Please delete tmpdir %s before beginning." % options.tmpdir)
+        sys.exit(1)
+else:
+    os.mkdir(options.tmpdir)
+'@
+$newTrimGuard = $newTrimGuard -replace "`r`n", "`n"
+if (($trimText -split [regex]::Escape($oldTrimGuard)).Count -ne 2) { throw "Expected exactly one ICU tmpdir guard" }
+$trimText = $trimText.Replace($oldTrimGuard, $newTrimGuard)
+[IO.File]::WriteAllText($IcuTrim, $trimText, [Text.UTF8Encoding]::new($false))
+$patchedTrimText = Get-Content -Raw $IcuTrim
+if (($patchedTrimText -split [regex]::Escape($oldTrimGuard)).Count -ne 1) { throw "Old ICU tmpdir guard remains after patch" }
+if ($patchedTrimText -notmatch 'if os\.listdir\(options\.tmpdir\):') { throw "Failed to patch empty ICU tmpdir handling" }
 
 # --- Configure & build with MSVC ---
 # Node ships vcbuild.bat which wraps configure + msbuild for the VS toolchain.

@@ -30,19 +30,21 @@
 - [x] 所有 Node Shell 脚本通过 `bash -n`，YAML 结构解析通过，`git diff --check` 通过。
 - [x] 修复 Node release 二次校验在删除 CI-only `node-commit.txt` 后仍强制要求 commit marker、导致发布必然失败的问题。
 - [x] 修复显式混合平台请求被 `SKIP_APPLE`/`SKIP_WINDOWS` 静默删减、可能造成部分矩阵假通过的问题。
-- [x] 将本轮 CI 修复提交并推送到 fork 的 `main`：首个提交 `cbeedd698059c8693af637c7ce1597803693be8b`，后续 ICU patch 提交 `685106808b42da39839a8e374f13ec187eb9f609`、配置解析提交 `fef3a6720599b13b660eb90260bbb37f9dd5abc8`。
+- [x] 将本轮 CI 修复提交并推送到 fork 的 `main`：首个提交 `cbeedd698059c8693af637c7ce1597803693be8b`，后续 ICU patch 提交 `685106808b42da39839a8e374f13ec187eb9f609`、配置解析提交 `fef3a6720599b13b660eb90260bbb37f9dd5abc8`、配置路径提交 `6cd34081338cf4338882a2839cef97be219804f5`。
 - [x] LWS Linux smoke run `31462169259` 成功。
 - [ ] V8 Linux smoke run `31462172647` 仍在运行。
 - [x] Node 两个 `--delete-tmp` action 已按真实 Node v22.x-v24.x 源码处理。
 - [x] Node run `31462904547` 越过 ICU trim patch，但旧验证器无法解析生成的 `icu_config.gypi` 表示。
 - [x] Node run `31463829269` 使用 AST 验证器重跑，仍报告 `icu_small` 未启用；已确认验证器一直读取了错误的 `icu_config.gypi`。
 - [x] 修复所有 Node 平台脚本：从正确的 `config.gypi` 读取 `icu_small`/`icu_locales`，而不是 ICU 工具配置 `icu_config.gypi`。
-- [ ] 提交并推送 `config.gypi` 路径修复，然后复跑 Node smoke。
+- [x] 定位 Node run `31464175446` 的新失败：GYP 预创建空 `icutmp`，而 `icutrim.py` 拒绝已有目录；改为只允许空目录、仍拒绝非空 stale 目录。
+- [x] 加固 Windows ICU tmpdir patch：规范化 CRLF/LF，并断言旧 guard 已完全移除。
+- [ ] 提交并推送 ICU tmpdir 修复，然后复跑 Node smoke。
 
 ## 已确认风险
 
 1. Node v22.x-v24.x 公开 GYP 有两个平台特定 `--delete-tmp` action，已按实际源码严格处理。
-2. Node 的 configure 参数已通过命令行传递；此前远端失败的直接根因是验证器读取了错误文件，现改为验证 `config.gypi`，等待远端复跑确认。
+2. Node 的 configure 参数和 `config.gypi` 验证路径已修复；最新失败仅剩 GYP 预创建空 `icutmp` 与 `icutrim.py` 严格目录检查的冲突，已加入空目录兼容 patch，等待远端复跑确认。
 3. Node small-ICU 数据校验依赖构建保留的 `icusmdt*.dat` 或 `icutmp/icudt*.dat`；如果 Node 上游改变生成路径，脚本会 fail closed。
 4. YAML 专用 lint 工具当前未安装；本地已用 PyYAML 做结构检查，并依赖 GitHub Actions 实际解析。
 
@@ -55,4 +57,4 @@
 - `bash -n scripts/node/*.sh`: 通过。
 - PyYAML workflow/action 结构解析：通过。
 - `git diff --check`: 通过。
-- GitHub Actions：LWS smoke 成功；V8 smoke 仍在运行；Node 第三次 smoke 已确认验证器读取错误 ICU 配置文件，当前路径修复待推送。
+- GitHub Actions：LWS smoke 成功；V8 smoke 仍在运行；Node retry 3 已通过 ICU 配置验证，但在 icutrim 的空 tmpdir 检查失败，当前 tmpdir 修复待推送。

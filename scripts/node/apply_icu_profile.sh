@@ -44,4 +44,39 @@ if grep -q -- "--delete-tmp" "$GYP"; then
   echo "Failed to disable ICU temporary-data deletion in $GYP" >&2
   exit 1
 fi
+# GYP creates the output directory before invoking icutrim.py. The current
+# Node v22.x-v24.x icutrim rejects an already-existing directory even when it
+# is empty, so make that exact case valid while preserving stale-data failure.
+ICUTRIM="$NODE_ROOT/tools/icu/icutrim.py"
+if [ ! -f "$ICUTRIM" ]; then
+  echo "Missing ICU trim tool: $ICUTRIM" >&2
+  exit 1
+fi
+python3 - "$ICUTRIM" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = '''if not (os.path.isdir(options.tmpdir)):
+    os.mkdir(options.tmpdir)
+else:
+    print("Please delete tmpdir %s before beginning." % options.tmpdir)
+    sys.exit(1)
+'''
+new = '''if os.path.isdir(options.tmpdir):
+    if os.listdir(options.tmpdir):
+        print("Please delete tmpdir %s before beginning." % options.tmpdir)
+        sys.exit(1)
+else:
+    os.mkdir(options.tmpdir)
+'''
+if text.count(old) != 1:
+    raise SystemExit("Expected exactly one icutrim tmpdir guard")
+path.write_text(text.replace(old, new, 1), encoding="utf-8")
+PY
+if ! grep -Fq 'if os.listdir(options.tmpdir):' "$ICUTRIM"; then
+  echo "Failed to patch empty ICU tmpdir handling" >&2
+  exit 1
+fi
 printf 'Applied ICU profile and retained trim data: %s\n' "$TARGET"
