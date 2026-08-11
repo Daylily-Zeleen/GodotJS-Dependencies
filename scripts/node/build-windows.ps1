@@ -25,7 +25,7 @@ $IcuGyp = Join-Path (Get-Location) "tools/icu/icu-generic.gyp"
 if (-not (Test-Path $IcuGyp)) { throw "Missing ICU gyp definition: $IcuGyp" }
 $gypText = Get-Content -Raw $IcuGyp
 $deleteTmpMatches = [regex]::Matches($gypText, "'--delete-tmp',")
-if ($deleteTmpMatches.Count -ne 1) { throw "Expected exactly one ICU --delete-tmp action, found $($deleteTmpMatches.Count)" }
+if ($deleteTmpMatches.Count -ne 2) { throw "Expected exactly two ICU --delete-tmp actions, found $($deleteTmpMatches.Count)" }
 $gypText = $gypText -replace "'--delete-tmp',", " "
 [IO.File]::WriteAllText($IcuGyp, $gypText, [Text.UTF8Encoding]::new($false))
 if ((Get-Content -Raw $IcuGyp) -match '--delete-tmp') { throw "Failed to disable ICU temporary-data deletion" }

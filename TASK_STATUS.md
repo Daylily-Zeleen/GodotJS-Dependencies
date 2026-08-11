@@ -31,11 +31,15 @@
 - [x] 修复 Node release 二次校验在删除 CI-only `node-commit.txt` 后仍强制要求 commit marker、导致发布必然失败的问题。
 - [x] 修复显式混合平台请求被 `SKIP_APPLE`/`SKIP_WINDOWS` 静默删减、可能造成部分矩阵假通过的问题。
 - [x] 将本轮 CI 修复提交并推送到 fork 的 `main`：`cbeedd698059c8693af637c7ce1597803693be8b`。
-- [ ] 监控包含本轮提交的 GitHub Actions run，读取失败日志并继续修复。
+- [x] LWS Linux smoke run `31462169259` 成功。
+- [ ] V8 Linux smoke run `31462172647` 仍在运行。
+- [x] 定位 Node Linux smoke run `31462175815` 失败根因：Node v22.x-v24.x 的 `icu-generic.gyp` 有两个平台特定 `--delete-tmp` action，脚本错误要求一个。
+- [x] 将 POSIX/Windows ICU patch 改为严格要求并移除两个 `--delete-tmp` action。
+- [ ] 重新推送 Node 修复并复跑失败 workflow。
 
 ## 已确认风险
 
-1. 本轮提交已进入远端，必须以其对应的实际 Actions run 结果作为最终验证。
+1. Node CI 已证明首版 ICU GYP 修改假设不适用于当前 Node v24.x：实际有两个 `--delete-tmp` 参数。
 2. Node small-ICU 数据校验依赖构建保留的 `icusmdt*.dat` 或 `icutmp/icudt*.dat`；如果 Node 上游改变生成路径，脚本会 fail closed。
 3. YAML 专用 lint 工具当前未安装；本地已用 PyYAML 做结构检查，并依赖 GitHub Actions 实际解析。
 
@@ -48,4 +52,4 @@
 - `bash -n scripts/node/*.sh`: 通过。
 - PyYAML workflow/action 结构解析：通过。
 - `git diff --check`: 通过。
-- GitHub Actions：正在等待包含提交 `cbeedd6` 的新 run。
+- GitHub Actions：LWS smoke 已成功；V8 smoke 仍在运行；Node smoke 已失败并进入修复。
