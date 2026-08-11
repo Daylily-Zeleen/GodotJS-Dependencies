@@ -29,7 +29,7 @@ bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
   --without-npm \
   --without-inspector \
   --without-report
-python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_config.py" icu_config.gypi
+python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_config.py" config.gypi
 # macos-latest is an M1 runner with only 7GB RAM; V8 host tools
 # (mksnapshot/torque) are memory-hungry and full ncpu parallelism can OOM
 # them. gyp's make is incremental, so on failure kill leftover build procs

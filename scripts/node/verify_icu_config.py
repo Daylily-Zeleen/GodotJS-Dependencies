@@ -21,7 +21,7 @@ def fail(message: str) -> "NoReturn":
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("path", type=Path, help="generated icu_config.gypi")
+    parser.add_argument("path", type=Path, help="generated Node config.gypi")
     args = parser.parse_args()
     if not args.path.is_file():
         fail(f"missing generated configuration: {args.path}")

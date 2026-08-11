@@ -73,7 +73,7 @@ export CXX_host="clang++ -std=c++20"
   --without-npm \
   --without-inspector \
   --without-report
-python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_config.py" icu_config.gypi
+python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_config.py" config.gypi
 
 # c-ares ships a macOS config (config/darwin/ares_config.h) which defines
 # HAVE_SYS_RANDOM_H - that header exists on macOS but NOT on iOS. Undefine it

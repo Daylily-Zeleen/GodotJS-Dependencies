@@ -86,7 +86,7 @@ PY
   --without-npm \
   --without-inspector \
   --without-report
-python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_config.py" icu_config.gypi
+python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_config.py" config.gypi
 make -j"$(nproc)"
 python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_data.py" out
 

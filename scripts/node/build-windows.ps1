@@ -56,7 +56,7 @@ if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
   & ".\vcbuild.bat" $VcCpu release small-icu
 }
 if ($LASTEXITCODE -ne 0) { throw "vcbuild.bat failed with exit code $LASTEXITCODE" }
-python "$Workspace\Scripts\scripts\node\verify_icu_config.py" "icu_config.gypi"
+python "$Workspace\Scripts\scripts\node\verify_icu_config.py" "config.gypi"
 python "$Workspace\Scripts\scripts\node\verify_icu_data.py" "out"
 
 # --- Locate static library (path varies across versions) ---
