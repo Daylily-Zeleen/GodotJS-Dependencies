@@ -37,6 +37,7 @@ fi
 
 # --- Configure & build with NDK cross toolchain ---
 cd node
+bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
 case "$DEST_CPU" in
   arm64) NDK_ARCH="arm64" ;;
   arm)   NDK_ARCH="arm" ;;
@@ -209,8 +210,24 @@ with io.open(path, 'w', encoding='utf-8') as f:
 PY
 
 # node v24 android builds are driven by ./android-configure (sets GYP_DEFINES
-# android_ndk_path). Usage: android-configure <ndk_path> <api> <arch>
+# android_ndk_path). The upstream wrapper does not forward configure flags, so
+# install the exact profile and add the ICU flags to its configure command before invoking it.
+python3 - <<'PY'
+from pathlib import Path
+
+path = Path('android_configure.py')
+s = path.read_text(encoding='utf-8')
+old = 'os.system("./configure --dest-cpu=" + DEST_CPU + " --dest-os=android --openssl-no-asm --cross-compiling")'
+new = ('os.system("./configure --dest-cpu=" + DEST_CPU + " --dest-os=android "\n'
+       '          "--with-intl=small-icu "\n'
+       '          "--with-icu-locales=root,en,en_GB,en_US,es,es_ES,es_MX,fr,fr_CA,fr_FR,ru,ru_RU,zh,zh_Hans,zh_Hans_CN,zh_Hans_HK,zh_Hant,zh_Hant_HK,zh_Hant_TW "\n'
+       '          "--openssl-no-asm --cross-compiling")')
+if old not in s:
+    raise SystemExit('ERROR: unexpected android_configure.py layout; refusing an unverified ICU patch')
+path.write_text(s.replace(old, new, 1), encoding='utf-8')
+PY
 ./android-configure "$NDK_ROOT" "$ANDROID_API" "$NDK_ARCH"
+python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_config.py" icu_config.gypi
 # Build ONLY the 'node' target (which depends on libnode.a). The top-level
 # 'make' builds ALL gyp targets including the android-only openssl-cli tool
 # which fails to link (undefined android_getCpuFeatures from NDK cpufeatures,
@@ -246,6 +263,7 @@ if [ "$made" -ne 1 ]; then
   echo "node make failed after 3 attempts" >&2
   exit 1
 fi
+python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_data.py" out
 
 # --- Locate static library (path varies across versions) ---
 LIB="$(find out -name 'libnode.a' -print -quit)"

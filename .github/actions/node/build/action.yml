@@ -36,6 +36,12 @@ runs:
             bash "$GITHUB_WORKSPACE/Scripts/scripts/node/build-ohos.sh" "${{ inputs.node_version }}"
             ;;
         esac
+        mkdir -p "$GITHUB_WORKSPACE/staging/libnode/${{ inputs.platform }}/${{ inputs.platform == 'windows' && 'x64' || inputs.arch }}"
+        git -C "$GITHUB_WORKSPACE/node" rev-parse HEAD > "$GITHUB_WORKSPACE/staging/libnode/${{ inputs.platform }}/${{ inputs.platform == 'windows' && 'x64' || inputs.arch }}/node-commit.txt"
+        python3 "$GITHUB_WORKSPACE/Scripts/scripts/verify_artifacts.py" node \
+          --root "$GITHUB_WORKSPACE/staging/libnode" \
+          --platform "${{ inputs.platform }}" \
+          --arch "${{ inputs.arch }}"
 
     - name: Build node (windows)
       if: runner.os == 'Windows'
@@ -45,3 +51,7 @@ runs:
         & "$env:GITHUB_WORKSPACE\Scripts\scripts\node\build-windows.ps1" `
           -Branch "${{ inputs.node_version }}" `
           -DestCpu "${{ inputs.arch }}"
+        $nodeRoot = Join-Path $env:GITHUB_WORKSPACE "staging/libnode/windows/x64"
+        New-Item -ItemType Directory -Force -Path $nodeRoot | Out-Null
+        git -C (Join-Path $env:GITHUB_WORKSPACE "node") rev-parse HEAD | Out-File -Encoding ascii (Join-Path $nodeRoot "node-commit.txt")
+        python "$env:GITHUB_WORKSPACE\Scripts\scripts\verify_artifacts.py" node --root "$env:GITHUB_WORKSPACE\staging\libnode" --platform "${{ inputs.platform }}" --arch "${{ inputs.arch }}"

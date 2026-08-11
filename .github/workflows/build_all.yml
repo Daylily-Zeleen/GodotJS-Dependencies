@@ -12,8 +12,8 @@ on:
         type: choice
         options:
           - "13.5.119"
-          - "12.9.202.28" # 2022
-          - "12.4.254.21" # 2019
+          - "12.9.202.28"
+          - "12.4.254.21"
         required: true
         default: "13.5.119"
       node_version:
@@ -32,42 +32,105 @@ on:
         default: ''
 
 jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    outputs:
+      lws_platforms: ${{ steps.split.outputs.lws_platforms }}
+      v8_platforms: ${{ steps.split.outputs.v8_platforms }}
+      node_platforms: ${{ steps.split.outputs.node_platforms }}
+      run_lws: ${{ steps.split.outputs.run_lws }}
+      run_v8: ${{ steps.split.outputs.run_v8 }}
+      run_node: ${{ steps.split.outputs.run_node }}
+    steps:
+      - name: Split component platform selections
+        id: split
+        shell: bash
+        env:
+          PLATFORMS_INPUT: ${{ inputs.platforms }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+
+          raw = os.environ.get('PLATFORMS_INPUT', '').strip()
+          if not raw or raw == 'all':
+              lws = v8 = node = raw or 'all'
+          else:
+              tokens = [item.strip() for item in raw.split(',') if item.strip()]
+              non_ohos = [item for item in tokens if item.split('-', 1)[0] != 'ohos']
+              lws = v8 = ','.join(non_ohos) or 'none'
+              node = ','.join(tokens)
+
+          run_lws = lws != 'none'
+          run_v8 = v8 != 'none'
+          run_node = node != 'none'
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f'lws_platforms={lws}\n')
+              output.write(f'v8_platforms={v8}\n')
+              output.write(f'node_platforms={node}\n')
+              output.write(f'run_lws={str(run_lws).lower()}\n')
+              output.write(f'run_v8={str(run_v8).lower()}\n')
+              output.write(f'run_node={str(run_node).lower()}\n')
+          PY
+
   v8:
+    needs: prepare
+    if: ${{ needs.prepare.outputs.run_v8 == 'true' }}
     uses: ./.github/workflows/build_v8.yml
     with:
       v8_version: ${{ inputs.v8_version }}
-      platforms: ${{ inputs.platforms }}
+      platforms: ${{ needs.prepare.outputs.v8_platforms }}
     secrets: inherit
 
   lws:
+    needs: prepare
+    if: ${{ needs.prepare.outputs.run_lws == 'true' }}
     uses: ./.github/workflows/build_lws.yml
     with:
-      platforms: ${{ inputs.platforms }}
+      platforms: ${{ needs.prepare.outputs.lws_platforms }}
     secrets: inherit
 
   node:
+    needs: prepare
+    if: ${{ needs.prepare.outputs.run_node == 'true' }}
     uses: ./.github/workflows/build_node.yml
     with:
       node_version: ${{ inputs.node_version }}
-      platforms: ${{ inputs.platforms }}
+      platforms: ${{ needs.prepare.outputs.node_platforms }}
     secrets: inherit
 
   publish:
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: write
     needs:
+      - prepare
       - v8
       - lws
       - node
-    if: ${{ always() && (needs.v8.result == 'success') && (needs.lws.result == 'success') && (needs.node.result == 'success') }}
+    if: ${{ always() && needs.prepare.result == 'success' && ((needs.v8.result == 'success') || (needs.prepare.outputs.run_v8 != 'true')) && ((needs.lws.result == 'success') || (needs.prepare.outputs.run_lws != 'true')) && ((needs.node.result == 'success') || (needs.prepare.outputs.run_node != 'true')) }}
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      LWS_PLATFORMS: ${{ needs.prepare.outputs.lws_platforms }}
+      V8_PLATFORMS: ${{ needs.prepare.outputs.v8_platforms }}
+      NODE_PLATFORMS: ${{ needs.prepare.outputs.node_platforms }}
+      RUN_LWS: ${{ needs.prepare.outputs.run_lws }}
+      RUN_V8: ${{ needs.prepare.outputs.run_v8 }}
+      RUN_NODE: ${{ needs.prepare.outputs.run_node }}
+      SKIP_APPLE: ${{ vars.SKIP_APPLE }}
+      SKIP_WINDOWS: ${{ vars.SKIP_WINDOWS }}
+      OHOS_NATIVE_HOME: ${{ vars.OHOS_NATIVE_HOME }}
+      OHOS_SDK_URL: ${{ vars.OHOS_SDK_URL }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: Scripts
+
       - uses: actions/download-artifact@v4
         with:
           path: staging/
           merge-multiple: true
 
-      - name: packaging
+      - name: Package and validate artifacts
         run: |
           set -euo pipefail
           sudo apt-get update -y
@@ -75,34 +138,74 @@ jobs:
           echo "Downloaded artifacts layout:"
           ls -R staging || true
 
-          if [ -d staging/v8 ]; then
-            (cd staging && zip -r "v8_${{ github.event.inputs.v8_version }}.zip" v8/)
-            echo "Created V8 bundle: staging/v8_${{ github.event.inputs.v8_version }}.zip"
-          else
-            echo "No v8 artifacts, skipping v8 bundle"
+          expected_platforms() {
+            local component="$1"
+            local component_platforms
+            case "$component" in
+              lws) component_platforms="${LWS_PLATFORMS:-none}" ;;
+              v8) component_platforms="${V8_PLATFORMS:-none}" ;;
+              node) component_platforms="${NODE_PLATFORMS:-none}" ;;
+              *) echo "Unknown component: $component" >&2; return 1 ;;
+            esac
+            local args=("$component" --platforms "$component_platforms")
+            if [ "${SKIP_APPLE:-}" = "true" ]; then args+=(--skip-apple); fi
+            if [ "${SKIP_WINDOWS:-}" = "true" ]; then args+=(--skip-windows); fi
+            if [ -n "${OHOS_NATIVE_HOME:-}" ] || [ -n "${OHOS_SDK_URL:-}" ]; then args+=(--ohos-available); fi
+            python3 Scripts/scripts/expected_platforms.py "${args[@]}"
+          }
+
+          expected_v8=''
+          expected_lws=''
+          expected_node=''
+          if [ "$RUN_V8" = 'true' ]; then expected_v8="$(expected_platforms v8)"; fi
+          if [ "$RUN_LWS" = 'true' ]; then expected_lws="$(expected_platforms lws)"; fi
+          if [ "$RUN_NODE" = 'true' ]; then expected_node="$(expected_platforms node)"; fi
+
+          if [ "$RUN_V8" = 'true' ]; then
+            [ -d staging/v8 ] || { echo "Missing staging/v8 for expected targets: $expected_v8" >&2; exit 1; }
+            python3 Scripts/scripts/verify_artifacts.py v8 --root staging/v8 --full --platforms "$expected_v8"
+            (cd staging && zip -r "v8_${{ inputs.v8_version }}.zip" v8/)
           fi
 
-          if [ -d staging/lws ]; then
+          if [ "$RUN_LWS" = 'true' ]; then
+            [ -d staging/lws ] || { echo "Missing staging/lws for expected targets: $expected_lws" >&2; exit 1; }
+            python3 Scripts/scripts/verify_artifacts.py lws --root staging/lws --full --platforms "$expected_lws"
             (cd staging && zip -r "lws_4.3.zip" lws/)
-            echo "Created LWS bundle: staging/lws_4.3.zip"
-          else
-            echo "No lws artifacts, skipping lws bundle"
           fi
 
-          if [ -d staging/libnode ]; then
-            (cd staging && zip -r "node_${{ github.event.inputs.node_version }}.zip" libnode/)
-            echo "Created node bundle: staging/node_${{ github.event.inputs.node_version }}.zip"
-          else
-            echo "No node artifacts, skipping node bundle"
+          if [ "$RUN_NODE" = 'true' ]; then
+            [ -d staging/libnode ] || { echo "Missing staging/libnode for expected targets: $expected_node" >&2; exit 1; }
+            python3 Scripts/scripts/write_node_metadata.py \
+              --root staging/libnode \
+              --node-ref "${{ inputs.node_version }}" \
+              --workflow-repository "${{ github.repository }}" \
+              --workflow-commit "${{ github.sha }}"
+            python3 Scripts/scripts/verify_artifacts.py node --root staging/libnode --full --platforms "$expected_node"
+            find staging/libnode -type f -name node-commit.txt -delete
+            python3 Scripts/scripts/verify_artifacts.py node --root staging/libnode --full --platforms "$expected_node" --release
+            (cd staging && zip -r "node_${{ inputs.node_version }}.zip" libnode/)
           fi
+
+          shopt -s nullglob
+          archives=(staging/*.zip)
+          if [ "${#archives[@]}" -eq 0 ]; then
+            echo "No release archives were created" >&2
+            exit 1
+          fi
+          (cd staging && sha256sum "${archives[@]#staging/}") > staging/SHA256SUMS.txt
+          for archive in "${archives[@]}"; do
+            unzip -t "$archive" >/dev/null
+          done
+          cat staging/SHA256SUMS.txt
 
       - name: Create Release and Upload Assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ github.event.inputs.bundle_tag }}" \
+          gh release create "${{ inputs.bundle_tag }}" \
             staging/*.zip \
-            --title "${{ github.event.inputs.bundle_tag }}" \
+            staging/SHA256SUMS.txt \
+            --title "${{ inputs.bundle_tag }}" \
             --notes "V8, libwebsockets and node bundles." \
             --repo ${{ github.repository }} \
             --target ${{ github.sha }}

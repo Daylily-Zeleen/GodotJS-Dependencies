@@ -21,6 +21,7 @@ fi
 
 # --- Configure & build with iOS cross toolchain ---
 cd node
+bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
 
 # node.gypi unconditionally adds the openssl-cli test tool as a dependency of
 # libnode (node_use_openssl && !node_shared_openssl). On iOS it cannot link:
@@ -66,10 +67,13 @@ export CXX_host="clang++ -std=c++20"
   --dest-os=ios \
   --dest-cpu=arm64 \
   --cross-compiling \
+  --with-intl=small-icu \
+  --with-icu-locales=root,en,en_GB,en_US,es,es_ES,es_MX,fr,fr_CA,fr_FR,ru,ru_RU,zh,zh_Hans,zh_Hans_CN,zh_Hans_HK,zh_Hant,zh_Hant_HK,zh_Hant_TW \
   --openssl-no-asm \
   --without-npm \
   --without-inspector \
   --without-report
+python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_config.py" icu_config.gypi
 
 # c-ares ships a macOS config (config/darwin/ares_config.h) which defines
 # HAVE_SYS_RANDOM_H - that header exists on macOS but NOT on iOS. Undefine it
@@ -144,6 +148,7 @@ if [ "$made" -ne 1 ]; then
   echo "node make failed after 3 attempts" >&2
   exit 1
 fi
+python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_data.py" out
 
 # --- Locate static library (path varies across versions) ---
 LIB="$(find out -name 'libnode.a' -print -quit)"

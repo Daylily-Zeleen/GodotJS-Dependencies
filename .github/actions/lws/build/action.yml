@@ -78,6 +78,10 @@ runs:
           exit 1
         fi
         cp "libwebsockets/${LWS_LIB_PATH}" "staging/lws/${{ inputs.staging_dir }}/"
+        python3 "$GITHUB_WORKSPACE/Scripts/scripts/verify_artifacts.py" lws \
+          --root "$GITHUB_WORKSPACE/staging/lws" \
+          --platform "${{ inputs.platform }}" \
+          --arch "${{ inputs.arch }}"
 
     - name: Build lws (windows)
       if: runner.os == 'Windows'
@@ -106,4 +110,5 @@ runs:
         Copy-Item -Recurse libwebsockets/out/include "staging/lws/${{ inputs.staging_dir }}/"
         $lib = Get-ChildItem -Path libwebsockets -Recurse -Filter "*websockets*.lib" | Where-Object { $_.FullName -match "Release" } | Select-Object -First 1
         if (-not $lib) { $lib = Get-ChildItem -Path libwebsockets -Recurse -Filter "*websockets*.lib" | Select-Object -First 1 }
-        Copy-Item $lib.FullName "staging/lws/${{ inputs.staging_dir }}/"
+        Copy-Item $lib.FullName "staging/lws/${{ inputs.staging_dir }}/websockets_static.lib"
+        python $env:GITHUB_WORKSPACE\Scripts\scripts\verify_artifacts.py lws --root $env:GITHUB_WORKSPACE\staging\lws --platform ${{ inputs.platform }} --arch ${{ inputs.arch }}

@@ -20,12 +20,16 @@ fi
 
 # --- Configure & build ---
 cd node
+bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
 ./configure \
   --dest-os=mac \
   --dest-cpu="$DEST_CPU" \
+  --with-intl=small-icu \
+  --with-icu-locales=root,en,en_GB,en_US,es,es_ES,es_MX,fr,fr_CA,fr_FR,ru,ru_RU,zh,zh_Hans,zh_Hans_CN,zh_Hans_HK,zh_Hant,zh_Hant_HK,zh_Hant_TW \
   --without-npm \
   --without-inspector \
   --without-report
+python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_config.py" icu_config.gypi
 # macos-latest is an M1 runner with only 7GB RAM; V8 host tools
 # (mksnapshot/torque) are memory-hungry and full ncpu parallelism can OOM
 # them. gyp's make is incremental, so on failure kill leftover build procs
@@ -54,6 +58,7 @@ if [ "$made" -ne 1 ]; then
   echo "node make failed after 3 attempts" >&2
   exit 1
 fi
+python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_data.py" out
 
 # --- Locate static library (path varies across versions) ---
 LIB="$(find out -name 'libnode.a' -print -quit)"

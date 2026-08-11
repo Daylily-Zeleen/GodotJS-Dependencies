@@ -14,11 +14,32 @@ if (-not (Test-Path "node/.git")) {
   git clone --depth 1 --branch $Branch https://github.com/nodejs/node.git
 }
 Set-Location node
+$IcuProfile = Join-Path $Workspace "Scripts/scripts/node/icu-selected-locales.json"
+if (-not (Test-Path $IcuProfile)) { throw "Missing canonical ICU profile: $IcuProfile" }
+$IcuTarget = Join-Path (Get-Location) "tools/icu/icu_small.json"
+Copy-Item -Force $IcuProfile $IcuTarget
+if (-not ((Get-FileHash $IcuProfile).Hash -eq (Get-FileHash $IcuTarget).Hash)) {
+  throw "Canonical ICU profile was not copied exactly to $IcuTarget"
+}
+$IcuGyp = Join-Path (Get-Location) "tools/icu/icu-generic.gyp"
+if (-not (Test-Path $IcuGyp)) { throw "Missing ICU gyp definition: $IcuGyp" }
+$gypText = Get-Content -Raw $IcuGyp
+$deleteTmpMatches = [regex]::Matches($gypText, "'--delete-tmp',")
+if ($deleteTmpMatches.Count -ne 1) { throw "Expected exactly one ICU --delete-tmp action, found $($deleteTmpMatches.Count)" }
+$gypText = $gypText -replace "'--delete-tmp',", " "
+[IO.File]::WriteAllText($IcuGyp, $gypText, [Text.UTF8Encoding]::new($false))
+if ((Get-Content -Raw $IcuGyp) -match '--delete-tmp') { throw "Failed to disable ICU temporary-data deletion" }
 
 # --- Configure & build with MSVC ---
 # Node ships vcbuild.bat which wraps configure + msbuild for the VS toolchain.
 # vcbuild.bat expects 'x64' (not 'x86_64'), so map the matrix arch first.
 $VcCpu = if ($DestCpu -eq "x86_64") { "x64" } else { $DestCpu }
+
+# Replicate moluopro/libnode's selected-locales-full-break-v1 ICU build. vcbuild
+# maps small-icu to --with-intl=small-icu and forwards config_flags to configure.
+$env:config_flags = "--with-icu-locales=root,en,en_GB,en_US,es,es_ES,es_MX,fr,fr_CA,fr_FR,ru,ru_RU,zh,zh_Hans,zh_Hans_CN,zh_Hans_HK,zh_Hant,zh_Hant_HK,zh_Hant_TW"
+Remove-Item -Force -ErrorAction SilentlyContinue .gyp_configure_stamp, .tmp_gyp_configure_stamp, node.sln
+
 
 # node builds OpenSSL with assembly which requires NASM; install it if missing.
 if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
@@ -30,11 +51,13 @@ if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
 }
 if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
   Write-Host "NASM still unavailable, building with openssl-no-asm"
-  & ".\vcbuild.bat" $VcCpu release openssl-no-asm
+  & ".\vcbuild.bat" $VcCpu release small-icu openssl-no-asm
 } else {
-  & ".\vcbuild.bat" $VcCpu release
+  & ".\vcbuild.bat" $VcCpu release small-icu
 }
 if ($LASTEXITCODE -ne 0) { throw "vcbuild.bat failed with exit code $LASTEXITCODE" }
+python "$Workspace\Scripts\scripts\node\verify_icu_config.py" "icu_config.gypi"
+python "$Workspace\Scripts\scripts\node\verify_icu_data.py" "out"
 
 # --- Locate static library (path varies across versions) ---
 $Lib = Get-ChildItem -Path "out" -Recurse -Filter "libnode*.lib" | Select-Object -First 1
@@ -64,6 +87,11 @@ if (Test-Path "out/Release/config.gypi") {
 }
 New-Item -ItemType Directory -Force -Path $LibDir | Out-Null
 Copy-Item -Force $Lib.FullName (Join-Path $LibDir "libnode.lib")
+# Publish the same Windows integration templates as moluopro/libnode. They
+# are part of the platform package, not source-only build helpers.
+$TemplateRoot = Join-Path $PSScriptRoot ""
+Copy-Item -Force (Join-Path $TemplateRoot "libnode.props") $LibDir
+Copy-Item -Force (Join-Path $TemplateRoot "libnode.cmake") $LibDir
 
 Write-Host "== staging layout =="
 Get-ChildItem -Path (Join-Path $Workspace "staging") -Recurse -File | Select-Object -ExpandProperty FullName

@@ -47,6 +47,11 @@ jobs:
           import json, os
 
           platforms = os.environ.get('PLATFORMS', '').strip()
+          if platforms and platforms != 'all':
+              requested_platforms = {p.strip().split('-', 1)[0] for p in platforms.split(',') if p.strip()}
+              unsupported = sorted(requested_platforms - {'linux', 'macos', 'windows', 'android', 'ios', 'ohos'})
+              if unsupported:
+                  raise SystemExit(f"Node does not support requested platform(s): {', '.join(unsupported)}")
           skip_apple = os.environ.get('SKIP_APPLE', '').strip() == 'true'
           skip_windows = os.environ.get('SKIP_WINDOWS', '').strip() == 'true'
           ohos_native = os.environ.get('OHOS_NATIVE_HOME', '').strip()
@@ -78,10 +83,24 @@ jobs:
                       continue
                   if '-' in p:
                       plat, _, arch = p.partition('-')
+                      if plat == 'windows' and arch == 'x64':
+                          arch = 'x86_64'
+                      valid_arches = {
+                          'linux': {'x86_64'}, 'macos': {'arm64'}, 'windows': {'x86_64'},
+                          'android': {'arm64'}, 'ios': {'arm64'}, 'ohos': {'arm64'},
+                      }
+                      if plat not in valid_arches or arch not in valid_arches[plat]:
+                          raise SystemExit(f"Node does not support {plat}-{arch}")
                       want.add(plat)
                       want_arch.setdefault(plat, set()).add(arch)
                   else:
                       want.add(p)
+
+          if want is not None:
+              if skip_apple and want & {'macos', 'ios'}:
+                  raise SystemExit('Apple platform was explicitly requested but SKIP_APPLE is enabled')
+              if skip_windows and 'windows' in want:
+                  raise SystemExit('windows was explicitly requested but SKIP_WINDOWS is enabled')
 
           selected = []
           for c in combos:
@@ -94,8 +113,13 @@ jobs:
               if skip_windows and c['platform'] == 'windows':
                   continue
               if c['platform'] == 'ohos' and not (ohos_native or ohos_sdk_url):
+                  if want is not None and c['platform'] in want:
+                      raise SystemExit('OHOS was explicitly requested but no OHOS SDK is configured')
                   continue
               selected.append(c)
+
+          if not selected:
+              raise SystemExit('Node platform selection produced no build targets')
 
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
               f.write(f"matrix={json.dumps(selected)}\n")
@@ -103,6 +127,7 @@ jobs:
 
   build:
     needs: setup
+    timeout-minutes: 300
     runs-on: ${{ matrix.runner }}
     env:
       NODE_VERSION: ${{ inputs.node_version || github.event.inputs.node_version }}
@@ -126,7 +151,7 @@ jobs:
           path: Scripts
 
       - uses: actions/setup-python@v5
-        if: ${{ matrix.platform == 'windows' && vars.HOST_WINDOWS != 'true' || matrix.platform == 'macos' || matrix.platform == 'ios' }}
+        if: ${{ matrix.platform == 'windows' || matrix.platform == 'macos' || matrix.platform == 'ios' }}
         with:
           python-version: '3.12'
           architecture: 'x64'

@@ -45,6 +45,11 @@ jobs:
           import json, os
 
           platforms = os.environ.get('PLATFORMS', '').strip()
+          if platforms and platforms != 'all':
+              requested_platforms = {p.strip().split('-', 1)[0] for p in platforms.split(',') if p.strip()}
+              unsupported = sorted(requested_platforms - {'linux', 'macos', 'windows', 'android', 'ios'})
+              if unsupported:
+                  raise SystemExit(f"V8 does not support requested platform(s): {', '.join(unsupported)}")
           skip_apple = os.environ.get('SKIP_APPLE', '').strip() == 'true'
           skip_windows = os.environ.get('SKIP_WINDOWS', '').strip() == 'true'
 
@@ -77,10 +82,25 @@ jobs:
                       continue
                   if '-' in p:
                       plat, _, arch = p.partition('-')
+                      if plat == 'windows' and arch == 'x86_64':
+                          arch = 'x64'
+                      valid_arches = {
+                          'linux': {'x86_64', 'arm64'}, 'macos': {'arm64', 'x86_64'},
+                          'windows': {'x64', 'arm64'}, 'android': {'arm64', 'arm32', 'x86_64'},
+                          'ios': {'arm64'},
+                      }
+                      if plat not in valid_arches or arch not in valid_arches[plat]:
+                          raise SystemExit(f"V8 does not support {plat}-{arch}")
                       want.add(plat)
                       want_arch.setdefault(plat, set()).add(arch)
                   else:
                       want.add(p)
+
+          if want is not None:
+              if skip_apple and want & {'macos', 'ios'}:
+                  raise SystemExit('Apple platform was explicitly requested but SKIP_APPLE is enabled')
+              if skip_windows and 'windows' in want:
+                  raise SystemExit('windows was explicitly requested but SKIP_WINDOWS is enabled')
 
           selected = []
           for c in combos:
@@ -93,6 +113,9 @@ jobs:
               if skip_windows and c['platform'] == 'windows':
                   continue
               selected.append(c)
+
+          if not selected:
+              raise SystemExit('V8 platform selection produced no build targets')
 
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
               f.write(f"matrix={json.dumps(selected)}\n")

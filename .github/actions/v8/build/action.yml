@@ -88,6 +88,11 @@ runs:
         cp -r "$GITHUB_WORKSPACE/v8/v8/include/." "staging/v8/include/"
         mkdir -p "staging/v8/${{ inputs.staging_dir }}"
         cp "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/obj/libv8_monolith.a" "staging/v8/${{ inputs.staging_dir }}/"
+        cp "$GITHUB_WORKSPACE/v8/v8/DEPS" "staging/v8/${{ inputs.staging_dir }}/DEPS"
+        python3 "$GITHUB_WORKSPACE/Scripts/scripts/verify_artifacts.py" v8 \
+          --root "$GITHUB_WORKSPACE/staging/v8" \
+          --platform "${{ inputs.platform }}" \
+          --arch "${{ inputs.arch }}"
 
     - name: Build v8 (windows)
       if: runner.os == 'Windows'
@@ -109,3 +114,5 @@ runs:
         mkdir staging\v8\${{ inputs.staging_dir }}
         xcopy %GITHUB_WORKSPACE%\v8\v8\include staging\v8\include\ /Q /R /S /F /Y
         copy %GITHUB_WORKSPACE%\v8\v8\out.gn\${{ inputs.target }}\obj\v8_monolith.lib staging\v8\${{ inputs.staging_dir }}\v8_monolith.lib /Y /B
+        copy %GITHUB_WORKSPACE%\v8\v8\DEPS staging\v8\${{ inputs.staging_dir }}\DEPS /Y /B
+        python %GITHUB_WORKSPACE%\Scripts\scripts\verify_artifacts.py v8 --root %GITHUB_WORKSPACE%\staging\v8 --platform ${{ inputs.platform }} --arch ${{ inputs.arch }}

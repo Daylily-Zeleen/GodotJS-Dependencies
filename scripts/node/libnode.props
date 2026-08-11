@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)..\..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <AdditionalOptions>/Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(MSBuildThisFileDirectory);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>libnode.lib;Dbghelp.lib;Psapi.lib;Winmm.lib;Ws2_32.lib;Advapi32.lib;Crypt32.lib;Ole32.lib;Iphlpapi.lib;Shell32.lib;User32.lib;Userenv.lib;Uuid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/WHOLEARCHIVE:libnode.lib %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+  </ItemDefinitionGroup>
+</Project>
