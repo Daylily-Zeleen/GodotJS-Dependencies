@@ -4,3 +4,17 @@
 
 /.freebuff/
 AGENTS.md
+
+.scratch
+TASK_STATUS.md
+
+# Build artifacts and temporary files
+bash.exe.stackdump
+common_gypi.txt
+configure.py
+install.py
+node_gypi.txt
+
+# Python cache
+scripts/__pycache__/
+scripts/node/__pycache__/
