@@ -119,12 +119,17 @@ def validate_node_windows(root: Path) -> None:
     if not library.is_file():
         fail(f"libnode.lib not found: {library}")
     dumpbin = shutil.which("dumpbin")
-    if dumpbin is None:
-        fail("dumpbin not found; run from a Visual Studio developer environment")
-    result = run([dumpbin, "/symbols", str(library)])
-    if result.returncode != 0:
-        fail(f"dumpbin failed on {library}: {result.stderr.strip()}")
-    missing = [marker for marker in NODE_WINDOWS_MARKERS if marker not in result.stdout]
+    if dumpbin is not None:
+        result = run([dumpbin, "/symbols", str(library)])
+        if result.returncode != 0:
+            fail(f"dumpbin failed on {library}: {result.stderr.strip()}")
+        haystack = result.stdout
+    else:
+        # Hosted runners only expose dumpbin inside a VS developer prompt.
+        # A COFF archive stores the decorated symbol names verbatim, so a raw
+        # byte scan is equivalent for our marker check.
+        haystack = library.read_bytes().decode("latin-1")
+    missing = [marker for marker in NODE_WINDOWS_MARKERS if marker not in haystack]
     if missing:
         fail(f"{library} is missing Delegate RTTI/vftable symbol(s): {', '.join(missing)}")
     print(f"node RTTI validation passed: {library} contains the Delegate RTTI/vftable symbols")
