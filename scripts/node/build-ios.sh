@@ -22,6 +22,7 @@ fi
 # --- Configure & build with iOS cross toolchain ---
 cd node
 bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
+python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" ios
 
 # node.gypi unconditionally adds the openssl-cli test tool as a dependency of
 # libnode (node_use_openssl && !node_shared_openssl). On iOS it cannot link:

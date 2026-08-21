@@ -24,6 +24,7 @@ fi
 # --- Configure & build ---
 cd node
 bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
+python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" linux
 export CC=gcc-12
 export CXX=g++-12
 ./configure \

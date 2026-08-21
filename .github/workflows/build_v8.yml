@@ -1,6 +1,27 @@
 name: Build V8
 
 on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/build_v8.yml'
+      - '.github/actions/v8/**'
+      - 'config/v8/**'
+      - 'scripts/verify_artifacts.py'
+      - 'scripts/expected_platforms.py'
+      - 'scripts/verify_symbols.py'
+      - '.github/actions/upload/**'
+      - '.github/workflows/build_all.yml'
+  pull_request:
+    paths:
+      - '.github/workflows/build_v8.yml'
+      - '.github/actions/v8/**'
+      - 'config/v8/**'
+      - 'scripts/verify_artifacts.py'
+      - 'scripts/expected_platforms.py'
+      - 'scripts/verify_symbols.py'
+      - '.github/actions/upload/**'
+      - '.github/workflows/build_all.yml'
   workflow_dispatch:
     inputs:
       v8_version:
@@ -125,7 +146,7 @@ jobs:
     needs: setup
     runs-on: ${{ matrix.runner }}
     env:
-      V8_VERSION: ${{ inputs.v8_version || github.event.inputs.v8_version }}
+      V8_VERSION: ${{ inputs.v8_version || github.event.inputs.v8_version || '13.5.119' }}
     strategy:
       fail-fast: false
       matrix:

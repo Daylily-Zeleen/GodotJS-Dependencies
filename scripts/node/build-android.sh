@@ -38,6 +38,7 @@ fi
 # --- Configure & build with NDK cross toolchain ---
 cd node
 bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
+python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" android
 case "$DEST_CPU" in
   arm64) NDK_ARCH="arm64" ;;
   arm)   NDK_ARCH="arm" ;;

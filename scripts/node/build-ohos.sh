@@ -43,6 +43,7 @@ fi
 # --- Configure & build with OHOS cross toolchain ---
 cd node
 bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
+python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" ohos
 export CC="$OHOS_NATIVE_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang"
 export CXX="$OHOS_NATIVE_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang++"
 export AR="$OHOS_NATIVE_HOME/llvm/bin/llvm-ar"

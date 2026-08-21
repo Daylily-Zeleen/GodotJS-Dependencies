@@ -42,6 +42,10 @@ runs:
           --root "$GITHUB_WORKSPACE/staging/libnode" \
           --platform "${{ inputs.platform }}" \
           --arch "${{ inputs.arch }}"
+        python3 "$GITHUB_WORKSPACE/Scripts/scripts/verify_symbols.py" node \
+          --root "$GITHUB_WORKSPACE/staging/libnode" \
+          --platform "${{ inputs.platform }}" \
+          --arch "${{ inputs.arch }}"
 
     - name: Build node (windows)
       if: runner.os == 'Windows'
@@ -55,3 +59,4 @@ runs:
         New-Item -ItemType Directory -Force -Path $nodeRoot | Out-Null
         git -C (Join-Path $env:GITHUB_WORKSPACE "node") rev-parse HEAD | Out-File -Encoding ascii (Join-Path $nodeRoot "node-commit.txt")
         python "$env:GITHUB_WORKSPACE\Scripts\scripts\verify_artifacts.py" node --root "$env:GITHUB_WORKSPACE\staging\libnode" --platform "${{ inputs.platform }}" --arch "${{ inputs.arch }}"
+        python "$env:GITHUB_WORKSPACE\Scripts\scripts\verify_symbols.py" node --root "$env:GITHUB_WORKSPACE\staging\libnode" --platform "${{ inputs.platform }}" --arch "${{ inputs.arch }}"

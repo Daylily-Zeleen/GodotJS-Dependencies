@@ -21,6 +21,7 @@ fi
 # --- Configure & build ---
 cd node
 bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
+python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" macos
 ./configure \
   --dest-os=mac \
   --dest-cpu="$DEST_CPU" \

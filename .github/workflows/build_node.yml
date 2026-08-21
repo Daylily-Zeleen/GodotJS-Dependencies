@@ -1,6 +1,27 @@
 name: Build Node
 
 on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/build_node.yml'
+      - '.github/actions/node/**'
+      - 'scripts/node/**'
+      - 'scripts/verify_artifacts.py'
+      - 'scripts/expected_platforms.py'
+      - 'scripts/verify_symbols.py'
+      - '.github/actions/upload/**'
+      - '.github/workflows/build_all.yml'
+  pull_request:
+    paths:
+      - '.github/workflows/build_node.yml'
+      - '.github/actions/node/**'
+      - 'scripts/node/**'
+      - 'scripts/verify_artifacts.py'
+      - 'scripts/expected_platforms.py'
+      - 'scripts/verify_symbols.py'
+      - '.github/actions/upload/**'
+      - '.github/workflows/build_all.yml'
   workflow_dispatch:
     inputs:
       node_version:
@@ -130,7 +151,7 @@ jobs:
     timeout-minutes: 300
     runs-on: ${{ matrix.runner }}
     env:
-      NODE_VERSION: ${{ inputs.node_version || github.event.inputs.node_version }}
+      NODE_VERSION: ${{ inputs.node_version || github.event.inputs.node_version || 'v24.x' }}
       # setup job gates the ohos combo on these vars; the build job must see
       # them too or build-ohos.sh fails with 'OHOS_NATIVE_HOME is not set'.
       OHOS_NATIVE_HOME: ${{ vars.OHOS_NATIVE_HOME }}
