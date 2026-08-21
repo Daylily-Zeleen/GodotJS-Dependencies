@@ -27,8 +27,38 @@ $gypText = Get-Content -Raw $IcuGyp
 $deleteTmpMatches = [regex]::Matches($gypText, "'--delete-tmp',")
 if ($deleteTmpMatches.Count -ne 2) { throw "Expected exactly two ICU --delete-tmp actions, found $($deleteTmpMatches.Count)" }
 $gypText = $gypText -replace "'--delete-tmp',", " "
+# Node >= 24 forces the ClangCL toolchain (vcbuild.bat), and an ICU genccode
+# built by clang refuses to emit a Windows .obj without an explicit CPU
+# architecture (-c). Wire '-c <(target_arch)' into every Windows genccode
+# action that lacks it (upstream only set it on one of the three actions).
+# ICU < 77 does not know this option, so gate on the node version.
+if ($Branch -notmatch '^v(\d+)') { throw "Cannot parse Node major version from branch '$Branch'" }
+$NodeMajor = [int]$Matches[1]
+if ($NodeMajor -ge 24) {
+  $gypLines = $gypText -split "`n", -1
+  $patchedLines = New-Object System.Collections.Generic.List[string]
+  $inserted = 0
+  for ($idx = 0; $idx -lt $gypLines.Count; $idx++) {
+    $line = $gypLines[$idx]
+    $patchedLines.Add($line)
+    if ($line -match "^([ \t]*)'<@\(icu_asm_opts\)', # -o\s*$") {
+      $indent = $Matches[1]
+      $next = if ($idx + 1 -lt $gypLines.Count) { $gypLines[$idx + 1] } else { "" }
+      if ($next -notmatch "^[ \t]*'-c',") {
+        $patchedLines.Add("$indent'-c', '<(target_arch)',")
+        $inserted++
+      }
+    }
+  }
+  if ($inserted -ne 2) { throw "Expected to add genccode -c to exactly two Windows ICU actions, found $inserted" }
+  $gypText = $patchedLines -join "`n"
+}
 [IO.File]::WriteAllText($IcuGyp, $gypText, [Text.UTF8Encoding]::new($false))
 if ((Get-Content -Raw $IcuGyp) -match '--delete-tmp') { throw "Failed to disable ICU temporary-data deletion" }
+if ($NodeMajor -ge 24) {
+  $cpuArchEntries = [regex]::Matches((Get-Content -Raw $IcuGyp), [regex]::Escape("'-c', '<(target_arch)',")).Count
+  if ($cpuArchEntries -lt 3) { throw "genccode -c patch incomplete: found $cpuArchEntries entries, expected at least 3" }
+}
 $IcuTrim = Join-Path (Get-Location) "tools/icu/icutrim.py"
 if (-not (Test-Path $IcuTrim)) { throw "Missing ICU trim tool: $IcuTrim" }
 $trimText = Get-Content -Raw $IcuTrim
