@@ -48,6 +48,14 @@ on:
         type: string
         default: ''
 
+# Supersede older runs of the same pull request instead of stacking them.
+# head_ref exists only on pull_request; elsewhere run_id keeps groups unique.
+# The input suffix keeps called instances distinct even when github.workflow
+# resolves to the caller's name inside build_all.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}-node-${{ inputs.node_version || '' }}-${{ inputs.platforms || '' }}
+  cancel-in-progress: true
+
 jobs:
   setup:
     runs-on: ubuntu-22.04

@@ -31,6 +31,12 @@ on:
         required: false
         default: ''
 
+# Supersede older full builds of the same ref and bundle tag instead of
+# stacking them; different bundle tags can still run concurrently.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.bundle_tag || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   prepare:
     runs-on: ubuntu-22.04
