@@ -35,7 +35,9 @@ $gypText = $gypText -replace "'--delete-tmp',", " "
 if ($Branch -notmatch '^v(\d+)') { throw "Cannot parse Node major version from branch '$Branch'" }
 $NodeMajor = [int]$Matches[1]
 if ($NodeMajor -ge 24) {
-  $gypLines = $gypText -split "`n", -1
+  # NOTE: use String.Split(); the -split operator with a ", -1" argument
+  # silently returns the unsplit string in some argument-parsing paths.
+  $gypLines = $gypText.Split("`n")
   $patchedLines = New-Object System.Collections.Generic.List[string]
   $inserted = 0
   for ($idx = 0; $idx -lt $gypLines.Count; $idx++) {
