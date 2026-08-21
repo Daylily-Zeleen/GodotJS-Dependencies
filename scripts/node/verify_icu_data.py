@@ -14,9 +14,28 @@ SELECTED = (
     "zh_Hant", "zh_Hant_HK", "zh_Hant_TW",
 )
 
+# ICU 78 merged these locale bundles into their parents (en_US -> en,
+# es_ES -> es, ...); the .res files no longer exist in the source data and
+# the locales resolve through fallback, so their absence is expected.
+FALLBACK_OK = {"en_US", "es_ES", "fr_FR", "ja_JP", "ru_RU", "th_TH", "zh_Hans_HK"}
+
+# Parent-anchor locales our targets depend on. Without them icupkg's
+# dependency cascade deletes the dependent locales (en_GB -> en_001,
+# es_MX -> es_419); they must stay in the trimmed archive.
+REQUIRED = tuple(s for s in SELECTED if s not in FALLBACK_OK) + ("en_001", "es_419")
+
+# Legacy/alias bundles that exist in the raw data but are absent from the
+# res_index manifest, so icutrim never queues them for removal.
+ALLOWED_EXTRA = {"zh_CN", "zh_HK", "zh_TW"}
+
+# The full ICU data archive is ~33 MB; a trimmed archive above this bound
+# means the trim step silently failed to run.
+MAX_ARCHIVE_BYTES = 20 * 1024 * 1024
+
 # icutrim rebuilds res_index.res for every trimmed resource tree (lang/region/
-# curr/...); it is a per-tree index, not a locale resource.
-NON_LOCALE_RES = {"res_index"}
+# curr/...); it is a per-tree index, not a locale resource. pool.res is the
+# shared string pool the tree bundles reference.
+NON_LOCALE_RES = {"res_index", "pool"}
 
 
 def fail(message: str) -> "NoReturn":
@@ -76,11 +95,16 @@ def main() -> int:
     if result.returncode != 0:
         fail(f"icupkg could not list {archive}: {result.stderr.strip()}")
     listing = result.stdout
-    for locale in SELECTED:
+    if archive.stat().st_size > MAX_ARCHIVE_BYTES:
+        fail(
+            f"trimmed archive is {archive.stat().st_size} bytes; above "
+            f"{MAX_ARCHIVE_BYTES} suggests the ICU trim step did not run"
+        )
+    for locale in REQUIRED:
         if not re.search(rf"(?:^|[/\\])lang[/\\]{re.escape(locale)}\.res(?:$|\s)", listing, re.MULTILINE):
             fail(f"selected locale data is missing: lang/{locale}.res")
     locale_entries = set(re.findall(r"(?:^|[/\\])lang[/\\]([^/\\\s]+)\.res(?:$|\s)", listing, re.MULTILINE))
-    unexpected = sorted(locale_entries - set(SELECTED) - NON_LOCALE_RES)
+    unexpected = sorted(locale_entries - set(SELECTED) - set(REQUIRED) - ALLOWED_EXTRA - NON_LOCALE_RES)
     if unexpected:
         fail(f"unselected locale data is present: {unexpected}")
     print(f"ICU data passed: {archive}")

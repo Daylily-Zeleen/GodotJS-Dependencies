@@ -4,16 +4,18 @@
   "variables": {
     "locales": {
       "only": [
-        "root",
         "en",
+        "en_001",
         "en_GB",
         "en_US",
         "es",
+        "es_419",
         "es_ES",
         "es_MX",
         "fr",
         "fr_CA",
         "fr_FR",
+        "root",
         "ru",
         "ru_RU",
         "zh",

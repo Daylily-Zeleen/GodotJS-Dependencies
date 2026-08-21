@@ -118,8 +118,12 @@ if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
   & ".\vcbuild.bat" $VcCpu release small-icu
 }
 if ($LASTEXITCODE -ne 0) { throw "vcbuild.bat failed with exit code $LASTEXITCODE" }
+# PowerShell does not abort on native-command failures, so the verification
+# scripts must be checked explicitly or their failures are silently ignored.
 python "$Workspace\Scripts\scripts\node\verify_icu_config.py" "config.gypi"
+if ($LASTEXITCODE -ne 0) { throw "ICU config verification failed with exit code $LASTEXITCODE" }
 python "$Workspace\Scripts\scripts\node\verify_icu_data.py" "out"
+if ($LASTEXITCODE -ne 0) { throw "ICU data verification failed with exit code $LASTEXITCODE" }
 
 # --- Locate static library (path varies across versions) ---
 $Lib = Get-ChildItem -Path "out" -Recurse -Filter "libnode*.lib" | Select-Object -First 1
