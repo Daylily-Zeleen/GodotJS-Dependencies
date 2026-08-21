@@ -221,7 +221,7 @@ s = path.read_text(encoding='utf-8')
 old = 'os.system("./configure --dest-cpu=" + DEST_CPU + " --dest-os=android --openssl-no-asm --cross-compiling")'
 new = ('os.system("./configure --dest-cpu=" + DEST_CPU + " --dest-os=android "\n'
        '          "--with-intl=small-icu "\n'
-       '          "--with-icu-locales=root,en,en_GB,en_US,es,es_ES,es_MX,fr,fr_CA,fr_FR,ru,ru_RU,zh,zh_Hans,zh_Hans_CN,zh_Hans_HK,zh_Hant,zh_Hant_HK,zh_Hant_TW "\n'
+       '          "--with-icu-locales=root,en,en_001,en_GB,en_US,es,es_419,es_ES,es_MX,fr,fr_CA,fr_FR,ru,ru_RU,zh,zh_Hans,zh_Hans_CN,zh_Hans_HK,zh_Hant,zh_Hant_HK,zh_Hant_TW "\n'
        '          "--openssl-no-asm --cross-compiling")')
 if old not in s:
     raise SystemExit('ERROR: unexpected android_configure.py layout; refusing an unverified ICU patch')

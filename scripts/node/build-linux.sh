@@ -30,7 +30,7 @@ export CXX=g++-12
 ./configure \
   --dest-cpu=x64 \
   --with-intl=small-icu \
-  --with-icu-locales=root,en,en_GB,en_US,es,es_ES,es_MX,fr,fr_CA,fr_FR,ru,ru_RU,zh,zh_Hans,zh_Hans_CN,zh_Hans_HK,zh_Hant,zh_Hant_HK,zh_Hant_TW \
+  --with-icu-locales=root,en,en_001,en_GB,en_US,es,es_419,es_ES,es_MX,fr,fr_CA,fr_FR,ru,ru_RU,zh,zh_Hans,zh_Hans_CN,zh_Hans_HK,zh_Hant,zh_Hant_HK,zh_Hant_TW \
   --without-npm \
   --without-inspector \
   --without-report
