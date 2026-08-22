@@ -43,6 +43,7 @@ fi
 # --- Configure & build with OHOS cross toolchain ---
 cd node
 bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
+python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" ohos
 export CC="$OHOS_NATIVE_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang"
 export CXX="$OHOS_NATIVE_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang++"
 export AR="$OHOS_NATIVE_HOME/llvm/bin/llvm-ar"
@@ -82,7 +83,7 @@ PY
   --dest-cpu=arm64 \
   --cross-compiling \
   --with-intl=small-icu \
-  --with-icu-locales=root,en,en_GB,en_US,es,es_ES,es_MX,fr,fr_CA,fr_FR,ru,ru_RU,zh,zh_Hans,zh_Hans_CN,zh_Hans_HK,zh_Hant,zh_Hant_HK,zh_Hant_TW \
+  --with-icu-locales=root,en,en_001,en_GB,en_US,es,es_419,es_ES,es_MX,fr,fr_CA,fr_FR,ru,ru_RU,zh,zh_Hans,zh_Hans_CN,zh_Hans_HK,zh_Hant,zh_Hant_HK,zh_Hant_TW \
   --without-npm \
   --without-inspector \
   --without-report
@@ -114,7 +115,7 @@ if [ -f out/Release/config.gypi ]; then
   cp out/Release/config.gypi "$HDRS/"
 fi
 mkdir -p "$LIBDIR"
-cp "$LIB" "$LIBDIR/"
+python3 "$WORKSPACE/Scripts/scripts/node/merge_libnode.py" out/Release "$LIBDIR/libnode.a"
 
 echo "== staging layout =="
 find "$WORKSPACE/staging" -type f | sort

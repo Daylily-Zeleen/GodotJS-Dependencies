@@ -27,8 +27,40 @@ $gypText = Get-Content -Raw $IcuGyp
 $deleteTmpMatches = [regex]::Matches($gypText, "'--delete-tmp',")
 if ($deleteTmpMatches.Count -ne 2) { throw "Expected exactly two ICU --delete-tmp actions, found $($deleteTmpMatches.Count)" }
 $gypText = $gypText -replace "'--delete-tmp',", " "
+# Node >= 24 forces the ClangCL toolchain (vcbuild.bat), and an ICU genccode
+# built by clang refuses to emit a Windows .obj without an explicit CPU
+# architecture (-c). Wire '-c <(target_arch)' into every Windows genccode
+# action that lacks it (upstream only set it on one of the three actions).
+# ICU < 77 does not know this option, so gate on the node version.
+if ($Branch -notmatch '^v(\d+)') { throw "Cannot parse Node major version from branch '$Branch'" }
+$NodeMajor = [int]$Matches[1]
+if ($NodeMajor -ge 24) {
+  # NOTE: use String.Split(); the -split operator with a ", -1" argument
+  # silently returns the unsplit string in some argument-parsing paths.
+  $gypLines = $gypText.Split("`n")
+  $patchedLines = New-Object System.Collections.Generic.List[string]
+  $inserted = 0
+  for ($idx = 0; $idx -lt $gypLines.Count; $idx++) {
+    $line = $gypLines[$idx]
+    $patchedLines.Add($line)
+    if ($line -match "^([ \t]*)'<@\(icu_asm_opts\)', # -o\s*$") {
+      $indent = $Matches[1]
+      $next = if ($idx + 1 -lt $gypLines.Count) { $gypLines[$idx + 1] } else { "" }
+      if ($next -notmatch "^[ \t]*'-c',") {
+        $patchedLines.Add("$indent'-c', '<(target_arch)',")
+        $inserted++
+      }
+    }
+  }
+  if ($inserted -ne 2) { throw "Expected to add genccode -c to exactly two Windows ICU actions, found $inserted" }
+  $gypText = $patchedLines -join "`n"
+}
 [IO.File]::WriteAllText($IcuGyp, $gypText, [Text.UTF8Encoding]::new($false))
 if ((Get-Content -Raw $IcuGyp) -match '--delete-tmp') { throw "Failed to disable ICU temporary-data deletion" }
+if ($NodeMajor -ge 24) {
+  $cpuArchEntries = [regex]::Matches((Get-Content -Raw $IcuGyp), [regex]::Escape("'-c', '<(target_arch)',")).Count
+  if ($cpuArchEntries -lt 3) { throw "genccode -c patch incomplete: found $cpuArchEntries entries, expected at least 3" }
+}
 $IcuTrim = Join-Path (Get-Location) "tools/icu/icutrim.py"
 if (-not (Test-Path $IcuTrim)) { throw "Missing ICU trim tool: $IcuTrim" }
 $trimText = Get-Content -Raw $IcuTrim
@@ -58,6 +90,7 @@ $trimText = $trimText.Replace($oldTrimGuard, $newTrimGuard)
 $patchedTrimText = Get-Content -Raw $IcuTrim
 if (($patchedTrimText -split [regex]::Escape($oldTrimGuard)).Count -ne 1) { throw "Old ICU tmpdir guard remains after patch" }
 if ($patchedTrimText -notmatch 'if os\.listdir\(options\.tmpdir\):') { throw "Failed to patch empty ICU tmpdir handling" }
+python "$Workspace\Scripts\scripts\node\patch_rtti.py" (Get-Location) windows
 
 # --- Configure & build with MSVC ---
 # Node ships vcbuild.bat which wraps configure + msbuild for the VS toolchain.
@@ -66,7 +99,7 @@ $VcCpu = if ($DestCpu -eq "x86_64") { "x64" } else { $DestCpu }
 
 # Replicate moluopro/libnode's selected-locales-full-break-v1 ICU build. vcbuild
 # maps small-icu to --with-intl=small-icu and forwards config_flags to configure.
-$env:config_flags = "--with-icu-locales=root,en,en_GB,en_US,es,es_ES,es_MX,fr,fr_CA,fr_FR,ru,ru_RU,zh,zh_Hans,zh_Hans_CN,zh_Hans_HK,zh_Hant,zh_Hant_HK,zh_Hant_TW"
+$env:config_flags = "--with-icu-locales=root,en,en_001,en_GB,en_US,es,es_419,es_ES,es_MX,fr,fr_CA,fr_FR,ru,ru_RU,zh,zh_Hans,zh_Hans_CN,zh_Hans_HK,zh_Hant,zh_Hant_HK,zh_Hant_TW"
 Remove-Item -Force -ErrorAction SilentlyContinue .gyp_configure_stamp, .tmp_gyp_configure_stamp, node.sln
 
 
@@ -85,8 +118,12 @@ if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
   & ".\vcbuild.bat" $VcCpu release small-icu
 }
 if ($LASTEXITCODE -ne 0) { throw "vcbuild.bat failed with exit code $LASTEXITCODE" }
+# PowerShell does not abort on native-command failures, so the verification
+# scripts must be checked explicitly or their failures are silently ignored.
 python "$Workspace\Scripts\scripts\node\verify_icu_config.py" "config.gypi"
+if ($LASTEXITCODE -ne 0) { throw "ICU config verification failed with exit code $LASTEXITCODE" }
 python "$Workspace\Scripts\scripts\node\verify_icu_data.py" "out"
+if ($LASTEXITCODE -ne 0) { throw "ICU data verification failed with exit code $LASTEXITCODE" }
 
 # --- Locate static library (path varies across versions) ---
 $Lib = Get-ChildItem -Path "out" -Recurse -Filter "libnode*.lib" | Select-Object -First 1

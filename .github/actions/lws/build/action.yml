@@ -27,11 +27,13 @@ runs:
             if [ "${{ inputs.arch }}" = "arm64" ]; then
               export CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++
               cmake -DBUILD_SHARED_LIBS=OFF -DLWS_WITH_SSL=0 -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
                 -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
                 -DCMAKE_C_COMPILER=${CC} -DCMAKE_CXX_COMPILER=${CXX} ..
             else
               # x86_64: native build, no cross compiler
-              cmake -DBUILD_SHARED_LIBS=OFF -DLWS_WITH_SSL=0 -DCMAKE_BUILD_TYPE=Release ..
+              cmake -DBUILD_SHARED_LIBS=OFF -DLWS_WITH_SSL=0 -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_POSITION_INDEPENDENT_CODE=ON ..
             fi
             cmake --build . --config Release -j$(nproc)
             ;;
@@ -82,6 +84,12 @@ runs:
           --root "$GITHUB_WORKSPACE/staging/lws" \
           --platform "${{ inputs.platform }}" \
           --arch "${{ inputs.arch }}"
+        if [ "${{ inputs.platform }}" = "linux" ]; then
+          python3 "$GITHUB_WORKSPACE/Scripts/scripts/verify_symbols.py" lws \
+            --root "$GITHUB_WORKSPACE/staging/lws" \
+            --platform "${{ inputs.platform }}" \
+            --arch "${{ inputs.arch }}"
+        fi
 
     - name: Build lws (windows)
       if: runner.os == 'Windows'
