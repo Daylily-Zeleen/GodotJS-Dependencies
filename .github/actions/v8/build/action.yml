@@ -112,9 +112,19 @@ runs:
 
         rem windows: v8gen.py is unreliable, use gn gen directly with inline args
         call gn gen .\out.gn\${{ inputs.target }} -args="is_component_build=false is_debug=false target_cpu=""${{ inputs.arch }}"" target_os=""win"" v8_enable_i18n_support=false v8_monolithic=true v8_use_external_startup_data=false v8_enable_pointer_compression=true v8_jitless=false use_custom_libcxx=false treat_warnings_as_errors=false v8_symbol_level=0 v8_enable_sandbox=false"
+        rem Inject /STACK straight into the generated ninja link command for
+        rem mksnapshot: gn-level knobs proved unreliable for this target and the
+        rem default 1MB stack overflows within seconds of startup (0xC00000FD).
+        rem Fail-closed: abort unless exactly one mksnapshot link line matched.
+        powershell -NoProfile -Command "$n='.\\out.gn\\${{ inputs.target }}\\build.ninja'; $t=[IO.File]::ReadAllText($n); $m=[regex]::Matches($t,'/OUT:(?:\./)?mksnapshot\.exe'); if($m.Count -ne 1){ Write-Error ('unexpected mksnapshot link matches: '+$m.Count); exit 1 }; [IO.File]::WriteAllText($n, [regex]::Replace($t,'(/OUT:(?:\./)?mksnapshot\.exe)','/STACK:268435456 $1'))"
+        if errorlevel 1 exit /b 1
+        findstr /C:"/STACK:268435456 /OUT" ".\out.gn\${{ inputs.target }}\build.ninja" >nul || exit /b 1
         dir .\out.gn\${{ inputs.target }}
         more .\out.gn\${{ inputs.target }}\args.gn
         call ninja -C .\out.gn\${{ inputs.target }} v8_monolith
+        rem Diagnostic: print the PE SizeOfStackReserve actually linked into
+        rem mksnapshot so stack-related failures are debuggable from the log.
+        python -c "import struct;f=open(r'out.gn\${{ inputs.target }}\mksnapshot.exe','rb');f.seek(0x3c);pe=struct.unpack('<I',f.read(4))[0];f.seek(pe+0x28);print('mksnapshot.exe SizeOfStackReserve =',struct.unpack('<I',f.read(4))[0])" || echo "PE diagnostic skipped"
         dir %GITHUB_WORKSPACE%\v8\v8\out.gn\${{ inputs.target }}\obj\*.lib
 
         cd %GITHUB_WORKSPACE%
