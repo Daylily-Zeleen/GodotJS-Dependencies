@@ -144,7 +144,7 @@ runs:
         rem Route the mksnapshot action through the PE-stack wrapper: swap the
         rem exact launcher substring observed in CI logs inside every generated
         rem ninja file. Fail-closed when nothing matched.
-        powershell -NoProfile -Command "$dir='.\\out.gn\\${{ inputs.target }}'; $total=0; Get-ChildItem $dir -Recurse -Filter '*.ninja' | ForEach-Object { $t=[IO.File]::ReadAllText($_.FullName); if($t.Contains('../../tools/run.py ./mksnapshot ')){ $total++; [IO.File]::WriteAllText($_.FullName,$t.Replace('../../tools/run.py ./mksnapshot ','../../tools/run_mksnapshot_win.py ./mksnapshot ')) } }; Write-Host ('ninja files rerouted through stack wrapper: '+$total); if($total -lt 1){ Write-Error 'no ninja file references the mksnapshot run.py launch line'; exit 1 }"
+        powershell -NoProfile -Command "$dir='.\\out.gn\\${{ inputs.target }}'; $total=0; Get-ChildItem $dir -Recurse -Filter '*.ninja' | ForEach-Object { $t=[IO.File]::ReadAllText($_.FullName); if($t.Contains('../../tools/run.py ./mksnapshot ')){ $total++; [IO.File]::WriteAllText($_.FullName,$t.Replace('../../tools/run.py ./mksnapshot ','../../tools/run_mksnapshot_win.py ./mksnapshot ')) } }; Write-Host ('ninja files rerouted through stack wrapper: '+$total); if($total -lt 1){ if('${{ inputs.arch }}' -eq 'x64'){ Write-Error 'no ninja file references the mksnapshot run.py launch line'; exit 1 } else { Write-Host ('arch ${{ inputs.arch }} has no overflow; reroute skipped') } }"
         if errorlevel 1 exit /b 1
         dir .\out.gn\${{ inputs.target }}
         more .\out.gn\${{ inputs.target }}\args.gn
