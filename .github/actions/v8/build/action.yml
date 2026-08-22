@@ -113,12 +113,11 @@ runs:
         rem windows: v8gen.py is unreliable, use gn gen directly with inline args
         call gn gen .\out.gn\${{ inputs.target }} -args="is_component_build=false is_debug=false target_cpu=""${{ inputs.arch }}"" target_os=""win"" v8_enable_i18n_support=false v8_monolithic=true v8_use_external_startup_data=false v8_enable_pointer_compression=true v8_jitless=false use_custom_libcxx=false treat_warnings_as_errors=false v8_symbol_level=0 v8_enable_sandbox=false"
         rem Inject /STACK straight into the generated ninja link command for
-        rem mksnapshot: gn-level knobs proved unreliable for this target and the
-        rem default 1MB stack overflows within seconds of startup (0xC00000FD).
-        rem Fail-closed: on zero matches dump the relevant build.ninja lines.
-        powershell -NoProfile -Command "$n='.\\out.gn\\${{ inputs.target }}\\build.ninja'; $t=[IO.File]::ReadAllText($n); $m=[regex]::Matches($t,'/OUT:\S*mksnapshot\.exe'); if($m.Count -lt 1){ ($t -split \"`n\") | Select-String 'mksnapshot' | Select-Object -First 8 | ForEach-Object { [Console]::Error.WriteLine('NINJA-LINE: '+$_.Line.Trim()) }; Write-Error ('no mksnapshot link match in build.ninja'); exit 1 }; [IO.File]::WriteAllText($n, [regex]::Replace($t,'(/OUT:\S*mksnapshot\.exe)','/STACK:268435456 $1'))"
+        rem mksnapshot: the real link edge lives in a toolchain SUBNINJA file,
+        rem so patch every *.ninja under the out dir. Fail-closed when nothing
+        rem matched.
+        powershell -NoProfile -Command "$dir='.\\out.gn\\${{ inputs.target }}'; $total=0; Get-ChildItem $dir -Recurse -Filter '*.ninja' | ForEach-Object { $t=[IO.File]::ReadAllText($_.FullName); if([regex]::Matches($t,'/OUT:\S*mksnapshot\.exe').Count -gt 0){ $total++; [IO.File]::WriteAllText($_.FullName,[regex]::Replace($t,'(/OUT:\S*mksnapshot\.exe)','/STACK:268435456 $1')) } }; if($total -lt 1){ Write-Error 'no /OUT mksnapshot match in any .ninja'; exit 1 }; $hit=Get-ChildItem $dir -Recurse -Filter '*.ninja' | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }; if(-not ($hit -match '/STACK:268435456 /OUT')){ Write-Error 'post-patch verification failed'; exit 1 }; Write-Host ('patched /STACK into '+$total+' ninja link command(s)')"
         if errorlevel 1 exit /b 1
-        findstr /C:"/STACK:268435456 /OUT" ".\out.gn\${{ inputs.target }}\build.ninja" >nul || exit /b 1
         dir .\out.gn\${{ inputs.target }}
         more .\out.gn\${{ inputs.target }}\args.gn
         call ninja -C .\out.gn\${{ inputs.target }} v8_monolith
