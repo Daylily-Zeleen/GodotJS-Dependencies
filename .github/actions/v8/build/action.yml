@@ -94,6 +94,35 @@ runs:
           --platform "${{ inputs.platform }}" \
           --arch "${{ inputs.arch }}"
 
+    - name: Write mksnapshot stack wrapper (windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        # mksnapshot overflows its 2MB stack (V8 BUILD.gn /STACK:2097152) and
+        # gn/ninja-level linker flags proved unreachable for this target.
+        # Instead: a wrapper that rewrites the PE SizeOfStackReserve of the
+        # freshly-linked mksnapshot.exe to 256MB, then execs the original
+        # tools/run.py with all arguments. Fail-closed on missing run.py.
+        $runPy = Join-Path $env:GITHUB_WORKSPACE "v8\v8\tools\run.py"
+        if (-not (Test-Path $runPy)) { throw "missing $runPy" }
+        $wrapper = @'
+import os, struct, sys
+
+exe = sys.argv[1]
+with open(exe, "r+b") as f:
+    f.seek(0x3C)
+    pe = struct.unpack("<I", f.read(4))[0]
+    f.seek(pe + 0x28)
+    cur = struct.unpack("<I", f.read(4))[0]
+    if cur < 0x10000000:
+        f.seek(pe + 0x28)
+        f.write(struct.pack("<I", 0x10000000))
+os.execv(sys.executable, [sys.executable, "../../tools/run.py"] + sys.argv[1:])
+'@
+        $target = Join-Path $env:GITHUB_WORKSPACE "v8\v8\tools\run_mksnapshot_win.py"
+        [IO.File]::WriteAllText($target, $wrapper.Replace("`r`n", "`n"))
+        Write-Host "wrote $target"
+
     - name: Build v8 (windows)
       if: runner.os == 'Windows'
       shell: cmd
@@ -112,11 +141,10 @@ runs:
 
         rem windows: v8gen.py is unreliable, use gn gen directly with inline args
         call gn gen .\out.gn\${{ inputs.target }} -args="is_component_build=false is_debug=false target_cpu=""${{ inputs.arch }}"" target_os=""win"" v8_enable_i18n_support=false v8_monolithic=true v8_use_external_startup_data=false v8_enable_pointer_compression=true v8_jitless=false use_custom_libcxx=false treat_warnings_as_errors=false v8_symbol_level=0 v8_enable_sandbox=false"
-        rem Inject /STACK straight into the generated ninja link command for
-        rem mksnapshot: the real link edge lives in a toolchain SUBNINJA file,
-        rem so patch every *.ninja under the out dir. Fail-closed when nothing
-        rem matched.
-        powershell -NoProfile -Command "$dir='.\\out.gn\\${{ inputs.target }}'; $total=0; Get-ChildItem $dir -Recurse -Filter '*.ninja' | ForEach-Object { $t=[IO.File]::ReadAllText($_.FullName); if([regex]::Matches($t,'mksnapshot\\.exe').Count -gt 0){ $total++; [IO.File]::WriteAllText($_.FullName,[regex]::Replace($t,'(/OUT:\S*mksnapshot\.exe)','/STACK:268435456 $1')) } }; Write-Host ('ninja files mentioning mksnapshot.exe: '+$total); if($total -lt 1){ Write-Error 'no ninja file mentions mksnapshot.exe'; exit 1 }; Get-ChildItem $dir -Recurse -Filter '*.ninja' | ForEach-Object { $ln=[IO.File]::ReadAllLines($_.FullName); for($i=0;$i -lt $ln.Length;$i++){ if($ln[$i] -match 'lld-link|\.exe:' -and $ln[$i] -notmatch '^\s*#'){ [Console]::Error.WriteLine(('CMDLINE '+$_.Name+':'+$i+': '+$ln[$i].Substring(0,[Math]::Min(300,$ln[$i].Length)))) } } }; if(-not ((Get-ChildItem $dir -Recurse -Filter '*.ninja' | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -match '/STACK:268435456')){ Write-Error 'no /OUT-style match found; dumped candidate command lines above'; exit 1 }"
+        rem Route the mksnapshot action through the PE-stack wrapper: swap the
+        rem exact launcher substring observed in CI logs inside every generated
+        rem ninja file. Fail-closed when nothing matched.
+        powershell -NoProfile -Command "$dir='.\\out.gn\\${{ inputs.target }}'; $total=0; Get-ChildItem $dir -Recurse -Filter '*.ninja' | ForEach-Object { $t=[IO.File]::ReadAllText($_.FullName); if($t.Contains('../../tools/run.py ./mksnapshot ')){ $total++; [IO.File]::WriteAllText($_.FullName,$t.Replace('../../tools/run.py ./mksnapshot ','../../tools/run_mksnapshot_win.py ./mksnapshot ')) } }; Write-Host ('ninja files rerouted through stack wrapper: '+$total); if($total -lt 1){ Write-Error 'no ninja file references the mksnapshot run.py launch line'; exit 1 }"
         if errorlevel 1 exit /b 1
         dir .\out.gn\${{ inputs.target }}
         more .\out.gn\${{ inputs.target }}\args.gn
