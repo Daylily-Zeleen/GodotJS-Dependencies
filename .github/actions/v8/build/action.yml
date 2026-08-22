@@ -102,13 +102,16 @@ runs:
         set DEPOT_TOOLS_WIN_TOOLCHAIN=0
         cd %GITHUB_WORKSPACE%\v8\v8
 
+        rem Bump the win-x64 linker stack before generating: V8's BUILD.gn sets
+        rem /STACK:2097152 (2MB) for x64 targets and mksnapshot overflows it
+        rem during Turbofan scheduling (0xC00000FD). Reserve 256MB instead.
+        rem Fail-closed: abort when the upstream pattern is missing.
+        powershell -NoProfile -Command "$p='%GITHUB_WORKSPACE%\v8\v8\BUILD.gn'; $t=[IO.File]::ReadAllText($p); if($t.IndexOf('/STACK:2097152') -lt 0){ Write-Error 'expected /STACK:2097152 not found in v8 BUILD.gn'; exit 1 }; [IO.File]::WriteAllText($p, $t.Replace('/STACK:2097152','/STACK:268435456'))"
+        if errorlevel 1 exit /b 1
+        findstr /C:"/STACK:268435456" "%GITHUB_WORKSPACE%\v8\v8\BUILD.gn" >nul || exit /b 1
+
         rem windows: v8gen.py is unreliable, use gn gen directly with inline args
         call gn gen .\out.gn\${{ inputs.target }} -args="is_component_build=false is_debug=false target_cpu=""${{ inputs.arch }}"" target_os=""win"" v8_enable_i18n_support=false v8_monolithic=true v8_use_external_startup_data=false v8_enable_pointer_compression=true v8_jitless=false use_custom_libcxx=false treat_warnings_as_errors=false v8_symbol_level=0 v8_enable_sandbox=false"
-        rem Enlarge the linker-assigned stack: mksnapshot overflows the default
-        rem 1MB stack on windows x64 (0xC00000FD). Appended to args.gn and a
-        rem second gn gen picks it up, avoiding cmd inline-quote escaping.
-        >> .\out.gn\${{ inputs.target }}\args.gn echo extra_ldflags = [ "/STACK:33554432" ]
-        call gn gen .\out.gn\${{ inputs.target }}
         dir .\out.gn\${{ inputs.target }}
         more .\out.gn\${{ inputs.target }}\args.gn
         call ninja -C .\out.gn\${{ inputs.target }} v8_monolith
