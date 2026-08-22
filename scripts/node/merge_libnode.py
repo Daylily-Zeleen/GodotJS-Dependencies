@@ -75,6 +75,32 @@ def extract_members(lib: str, dest: str) -> list[str]:
     return extracted
 
 
+def archive(output: str, objects: list[str]) -> None:
+    """Create `output` from `objects`, batching via a response/file list.
+
+    BSD ar (macOS) silently produces an empty archive when handed thousands of
+    arguments on the command line, so each platform gets its own supported
+    batching mechanism:
+    - darwin (macOS/ios): libtool -static -filelist
+    - everything else (GNU ar): response file (@list), the same mechanism
+      node's own Makefiles use for their archives.
+    """
+    os.makedirs(os.path.dirname(os.path.abspath(output)), exist_ok=True)
+    if os.path.exists(output):
+        os.unlink(output)
+    list_path = output + ".objlist"
+    with open(list_path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(objects))
+    if sys.platform == "darwin":
+        cmd = ["libtool", "-static", "-o", output, "-filelist", list_path]
+    else:
+        cmd = ["ar", "rcs", output, f"@{list_path}"]
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        fail(f"{'libtool' if sys.platform == 'darwin' else 'ar'} failed ({result.returncode})")
+    os.unlink(list_path)
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         fail("usage: merge_libnode.py <build_out_dir> <output_lib_path>")
@@ -94,12 +120,10 @@ def main() -> int:
         if not objects:
             fail("no object members extracted from any library")
 
-        os.makedirs(os.path.dirname(os.path.abspath(output)), exist_ok=True)
-        # Portable archive creation: `ar rcs` works on both GNU and BSD ar.
-        result = subprocess.run(["ar", "rcs", output, *objects])
-        if result.returncode != 0:
-            fail(f"ar rcs failed ({result.returncode})")
+        archive(output, objects)
         size = os.path.getsize(output)
+        if size < 1024 * 1024:
+            fail(f"merged archive suspiciously small ({size} bytes); refusing to stage garbage")
         print(f"merged archive written: {output} ({size} bytes, {len(objects)} objects)")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
