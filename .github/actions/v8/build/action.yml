@@ -106,19 +106,19 @@ runs:
         $runPy = Join-Path $env:GITHUB_WORKSPACE "v8\v8\tools\run.py"
         if (-not (Test-Path $runPy)) { throw "missing $runPy" }
         $wrapper = @'
-import os, struct, sys
+        import os, struct, sys
 
-exe = sys.argv[1]
-with open(exe, "r+b") as f:
-    f.seek(0x3C)
-    pe = struct.unpack("<I", f.read(4))[0]
-    f.seek(pe + 0x28)
-    cur = struct.unpack("<I", f.read(4))[0]
-    if cur < 0x10000000:
-        f.seek(pe + 0x28)
-        f.write(struct.pack("<I", 0x10000000))
-os.execv(sys.executable, [sys.executable, "../../tools/run.py"] + sys.argv[1:])
-'@
+        exe = sys.argv[1]
+        with open(exe, "r+b") as f:
+            f.seek(0x3C)
+            pe = struct.unpack("<I", f.read(4))[0]
+            f.seek(pe + 0x28)
+            cur = struct.unpack("<I", f.read(4))[0]
+            if cur < 0x10000000:
+                f.seek(pe + 0x28)
+                f.write(struct.pack("<I", 0x10000000))
+        os.execv(sys.executable, [sys.executable, "../../tools/run.py"] + sys.argv[1:])
+        '@
         $target = Join-Path $env:GITHUB_WORKSPACE "v8\v8\tools\run_mksnapshot_win.py"
         [IO.File]::WriteAllText($target, $wrapper.Replace("`r`n", "`n"))
         Write-Host "wrote $target"
