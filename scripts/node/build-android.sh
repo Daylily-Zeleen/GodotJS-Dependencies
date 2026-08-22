@@ -290,7 +290,7 @@ if [ -f out/Release/config.gypi ]; then
   cp out/Release/config.gypi "$HDRS/"
 fi
 mkdir -p "$LIBDIR"
-cp "$LIB" "$LIBDIR/"
+python3 "$WORKSPACE/Scripts/scripts/node/merge_libnode.py" out/Release "$LIBDIR/libnode.a"
 
 echo "== staging layout =="
 find "$WORKSPACE/staging" -type f | sort

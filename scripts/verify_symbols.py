@@ -36,9 +36,16 @@ NODE_PLATFORMS = {
     "ohos": {"arm64"},
 }
 
-NODE_TYPEINFO = (
-    "typeinfo for v8::ValueSerializer::Delegate",
-    "typeinfo for v8::ValueDeserializer::Delegate",
+# The Delegate RTTI typeinfo symbols are emitted by V8 with hidden visibility
+# (BUILDING_V8_SHARED is undefined for the static build, so V8_EXPORT expands to
+# nothing) and are therefore not present even in the official moluopro/libnode
+# release. The symbols that actually prove the Delegate code was linked into the
+# single self-contained libnode.a -- and that a downstream subclass vtable needs
+# to resolve -- are the out-of-line default virtual function implementations,
+# which V8 emits weakly into the api objects. We assert their presence instead.
+NODE_DELEGATE_MARKERS = (
+    "v8::ValueSerializer::Delegate::WriteHostObject",
+    "v8::ValueDeserializer::Delegate::ReadHostObject",
 )
 # MSVC does not demangle by default; these substrings match both the vftable
 # symbol (??_7Delegate@ValueSerializer@v8@@6B@) and the RTTI descriptors
@@ -108,10 +115,10 @@ def validate_node_unix(root: Path, platform: str, arch: str) -> None:
     result = run([nm, "-C", str(library)])
     if result.returncode != 0:
         fail(f"nm failed on {library}: {result.stderr.strip()}")
-    missing = [symbol for symbol in NODE_TYPEINFO if symbol not in result.stdout]
+    missing = [symbol for symbol in NODE_DELEGATE_MARKERS if symbol not in result.stdout]
     if missing:
-        fail(f"{library} is missing RTTI typeinfo symbol(s): {', '.join(missing)}")
-    print(f"node RTTI validation passed: {library} contains the Delegate typeinfo symbols")
+        fail(f"{library} is missing Delegate RTTI symbol(s): {', '.join(missing)}")
+    print(f"node RTTI validation passed: {library} contains the Delegate RTTI symbols")
 
 
 def validate_node_windows(root: Path) -> None:

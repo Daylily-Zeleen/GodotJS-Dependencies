@@ -50,7 +50,7 @@ echo "Found: $LIB"
 # --- Stage artifacts ---
 # Layout mirrors moluopro/libnode releases: libnode/<platform>/<arch>/libnode.a
 # with one shared libnode/include/ (node header install flattened to include/).
-LIBDIR="$WORKSPACE/staging/libnode/linux/x64"
+LIBDIR="$WORKSPACE/staging/libnode/linux/x86_64"
 HDRS="$WORKSPACE/staging/libnode/include"
 rm -rf "$HDRS"
 python3 tools/install.py install --headers-only --dest-dir "$HDRS" --prefix "/"
@@ -62,7 +62,7 @@ if [ -f out/Release/config.gypi ]; then
   cp out/Release/config.gypi "$HDRS/"
 fi
 mkdir -p "$LIBDIR"
-cp "$LIB" "$LIBDIR/"
+python3 "$WORKSPACE/Scripts/scripts/node/merge_libnode.py" out/Release "$LIBDIR/libnode.a"
 
 echo "== staging layout =="
 find "$WORKSPACE/staging" -type f | sort
