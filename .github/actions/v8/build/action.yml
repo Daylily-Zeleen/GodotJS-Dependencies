@@ -196,6 +196,17 @@ runs:
         set MIN_RC=%ERRORLEVEL%
         echo min-exit-%MIN_RC%
         powershell -NoProfile -Command "Get-Content mksnap_min.txt -TotalCount 25"
+        rem Definitive crash-site capture: cdb ships with the Windows SDK on
+        rem hosted runners; dump the first-chance AV stack with module+offset.
+        set "CDB=C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe"
+        if not exist "%CDB%" for /f "delims=" %%i in ('where cdb.exe 2^>nul') do set "CDB=%%i"
+        if exist "%CDB%" (
+          "%CDB%" -lines -g -G -c ".symfix;y .reload;g;.ecxr;kv;q" .\mksnapshot.exe --embedded_src gen/embedded_min.S --startup_src gen/snapshot_min.cc > cdb_out.txt 2>&1
+          echo cdb-exit-%ERRORLEVEL%
+          powershell -NoProfile -Command "Get-Content cdb_out.txt -TotalCount 120"
+        ) else (
+          echo cdb-not-found
+        )
         rem Two-phase build: if the direct run produced the snapshot sources,
         rem resume ninja so the remaining edges (inline-asm conversion and the
         rem final monolith link) complete and the step succeeds.
