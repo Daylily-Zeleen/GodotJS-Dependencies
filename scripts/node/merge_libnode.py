@@ -16,6 +16,7 @@ Usage: merge_libnode.py <build_out_dir> <output_lib_path>
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -46,11 +47,13 @@ def list_libs(build_out: str) -> list[str]:
     return sorted(libs)
 
 
-def extract_members(lib: str, dest: str) -> list[str]:
+def extract_members(lib: str, dest: str, index: int) -> list[str]:
     """Extract every member of `lib` into `dest` with collision-free names.
 
     Uses `ar p` so it works for both regular and thin archives (the referenced
     object bytes are emitted on stdout). Returns the list of extracted paths.
+    The per-library prefix is a short index+digest pair: embedding the library
+    path verbatim blows past filesystem name limits on CI checkouts.
     """
     members = subprocess.run(
         ["ar", "t", lib], capture_output=True, text=True
@@ -58,12 +61,13 @@ def extract_members(lib: str, dest: str) -> list[str]:
     if members.returncode != 0:
         fail(f"ar t failed on {lib}: {members.stderr.strip()}")
     extracted: list[str] = []
-    base = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.relpath(lib, os.path.dirname(dest)))
+    digest = hashlib.sha1(os.path.abspath(lib).encode("utf-8")).hexdigest()[:10]
+    base = f"{index:03d}_{digest}"
     for member in members.stdout.splitlines():
         member = member.strip()
         if not member:
             continue
-        safe = f"{base}__{re.sub(r'[^A-Za-z0-9._-]', '_', member)}"
+        safe = f"{base}__{re.sub(r'[^A-Za-z0-9._-]', '_', member)}"[:200]
         out_path = os.path.join(dest, safe)
         # `ar p` prints the raw member content regardless of thin/regular form.
         with open(out_path, "wb") as fh:
@@ -115,8 +119,8 @@ def main() -> int:
     tmp = tempfile.mkdtemp(prefix="merge_libnode_")
     try:
         objects: list[str] = []
-        for lib in libs:
-            objects.extend(extract_members(lib, tmp))
+        for index, lib in enumerate(libs):
+            objects.extend(extract_members(lib, tmp, index))
         if not objects:
             fail("no object members extracted from any library")
 
