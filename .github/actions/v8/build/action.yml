@@ -181,10 +181,21 @@ runs:
         rem mksnapshot DIRECTLY from the out dir so its raw stderr surfaces
         rem instead of being swallowed by tools/run.py.
         cd .\out.gn\${{ inputs.target }}
-        .\mksnapshot.exe --help > mksnap_help.txt 2>&1 || echo help-exit-%ERRORLEVEL%
-        type mksnap_help.txt
-        .\mksnapshot.exe --turbo_instruction_scheduling --stress-turbo-late-spilling --target_os=win --target_arch=x64 --embedded_src gen/embedded.S --predictable --no-use-ic --embedded_variant Default --random-seed 314159265 --startup_src gen/snapshot.cc --no-native-code-counters --concurrent-builtin-generation --concurrent-turbofan-max-threads=0 > mksnap_direct.txt 2>&1 || echo direct-exit-%ERRORLEVEL%
-        type mksnap_direct.txt
+        rem NOTE: `|| echo` would read ERRORLEVEL *after* `type` resets it, so
+        rem capture the exit code into a var BEFORE any other command runs.
+        .\mksnapshot.exe --help > mksnap_help.txt 2>&1
+        set HELP_RC=%ERRORLEVEL%
+        echo help-exit-%HELP_RC%
+        .\mksnapshot.exe --turbo_instruction_scheduling --stress-turbo-late-spilling --target_os=win --target_arch=x64 --embedded_src gen/embedded.S --predictable --no-use-ic --embedded_variant Default --random-seed 314159265 --startup_src gen/snapshot.cc --no-native-code-counters --concurrent-builtin-generation --concurrent-turbofan-max-threads=0 > mksnap_direct.txt 2>&1
+        set DIRECT_RC=%ERRORLEVEL%
+        echo direct-exit-%DIRECT_RC%
+        rem Head of the captured output: the real error text lives at the TOP.
+        powershell -NoProfile -Command "Get-Content mksnap_direct.txt -TotalCount 25"
+        rem Minimal-args control run to isolate any single offending flag.
+        .\mksnapshot.exe --embedded_src gen/embedded_min.S --startup_src gen/snapshot_min.cc > mksnap_min.txt 2>&1
+        set MIN_RC=%ERRORLEVEL%
+        echo min-exit-%MIN_RC%
+        powershell -NoProfile -Command "Get-Content mksnap_min.txt -TotalCount 25"
         rem Two-phase build: if the direct run produced the snapshot sources,
         rem resume ninja so the remaining edges (inline-asm conversion and the
         rem final monolith link) complete and the step succeeds.
