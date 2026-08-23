@@ -221,7 +221,8 @@ runs:
         rem final monolith link) complete and the step succeeds.
         if exist gen\embedded.S (
           echo [two-phase] gen\embedded.S present; resuming ninja
-          call ninja -C .\out.gn\${{ inputs.target }} v8_monolith
+          rem Already inside out.gn\<target> after the probes; -C . resumes here.
+          call ninja -C . v8_monolith
           if errorlevel 1 exit /b 1
         ) else (
           echo [two-phase] no gen\embedded.S; cannot resume
