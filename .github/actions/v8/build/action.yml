@@ -109,6 +109,14 @@ runs:
         import os, struct, sys
 
         exe = sys.argv[1]
+        # ninja passes "./mksnapshot"; on Windows the actual image is
+        # mksnapshot.exe (the original run.py appended the suffix internally).
+        for candidate in (exe, exe + ".exe"):
+            if os.path.exists(candidate):
+                exe = candidate
+                break
+        else:
+            raise SystemExit("mksnapshot image not found: " + sys.argv[1])
         with open(exe, "r+b") as f:
             f.seek(0x3C)
             pe = struct.unpack("<I", f.read(4))[0]
