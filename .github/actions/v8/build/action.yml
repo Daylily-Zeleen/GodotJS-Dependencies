@@ -120,11 +120,22 @@ runs:
         with open(exe, "r+b") as f:
             f.seek(0x3C)
             pe = struct.unpack("<I", f.read(4))[0]
-            f.seek(pe + 0x28)
-            cur = struct.unpack("<I", f.read(4))[0]
+            f.seek(pe + 24)
+            magic = struct.unpack("<H", f.read(2))[0]
+            # OptionalHeader follows the 4-byte PE sig + 20-byte COFF header.
+            # SizeOfStackReserve: PE32+ at opt+0x48 (8 bytes), PE32 at opt+0x28
+            # (4 bytes). Absolute: pe + 24 + field offset.
+            if magic == 0x20B:
+                off, width = pe + 24 + 0x48, 8
+            elif magic == 0x10B:
+                off, width = pe + 24 + 0x28, 4
+            else:
+                raise SystemExit("unknown optional-header magic 0x%X" % magic)
+            f.seek(off)
+            cur = struct.unpack("<Q" if width == 8 else "<I", f.read(width))[0]
             if cur < 0x10000000:
-                f.seek(pe + 0x28)
-                f.write(struct.pack("<I", 0x10000000))
+                f.seek(off)
+                f.write(struct.pack("<Q" if width == 8 else "<I", 0x10000000))
         os.execv(sys.executable, [sys.executable, "../../tools/run.py"] + sys.argv[1:])
         '@
         $target = Join-Path $env:GITHUB_WORKSPACE "v8\v8\tools\run_mksnapshot_win.py"
@@ -159,7 +170,7 @@ runs:
         call ninja -C .\out.gn\${{ inputs.target }} v8_monolith
         rem Diagnostic: print the PE SizeOfStackReserve actually linked into
         rem mksnapshot so stack-related failures are debuggable from the log.
-        python -c "import struct;f=open(r'out.gn\${{ inputs.target }}\mksnapshot.exe','rb');f.seek(0x3c);pe=struct.unpack('<I',f.read(4))[0];f.seek(pe+0x28);print('mksnapshot.exe SizeOfStackReserve =',struct.unpack('<I',f.read(4))[0])" || echo "PE diagnostic skipped"
+        python -c "import struct;f=open(r'out.gn\${{ inputs.target }}\mksnapshot.exe','rb');f.seek(0x3c);pe=struct.unpack('<I',f.read(4))[0];f.seek(pe+24);m=struct.unpack('<H',f.read(2))[0];off=pe+24+(0x48 if m==0x20B else 0x28);w='<Q' if m==0x20B else '<I';f.seek(off);print('mksnapshot.exe SizeOfStackReserve =',struct.unpack(w,f.read(8 if m==0x20B else 4))[0])" || echo "PE diagnostic skipped"
         dir %GITHUB_WORKSPACE%\v8\v8\out.gn\${{ inputs.target }}\obj\*.lib
 
         cd %GITHUB_WORKSPACE%
