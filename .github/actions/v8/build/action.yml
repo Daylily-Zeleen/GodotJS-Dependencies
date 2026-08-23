@@ -171,6 +171,15 @@ runs:
         dir .\out.gn\${{ inputs.target }}
         more .\out.gn\${{ inputs.target }}\args.gn
         call ninja -C .\out.gn\${{ inputs.target }} v8_monolith
+        rem Post-mortem probes (cmd keeps going after ninja fails): run
+        rem mksnapshot DIRECTLY from the out dir so its raw stderr surfaces
+        rem instead of being swallowed by tools/run.py.
+        cd .\out.gn\${{ inputs.target }}
+        .\mksnapshot.exe --help > mksnap_help.txt 2>&1 || echo help-exit-%ERRORLEVEL%
+        type mksnap_help.txt
+        .\mksnapshot.exe --turbo_instruction_scheduling --stress-turbo-late-spilling --target_os=win --target_arch=x64 --embedded_src gen/embedded.S --predictable --no-use-ic --embedded_variant Default --random-seed 314159265 --startup_src gen/snapshot.cc --no-native-code-counters --concurrent-builtin-generation --concurrent-turbofan-max-threads=0 > mksnap_direct.txt 2>&1 || echo direct-exit-%ERRORLEVEL%
+        type mksnap_direct.txt
+        cd ..\..
         rem Diagnostic: print the PE SizeOfStackReserve actually linked into
         rem mksnapshot so stack-related failures are debuggable from the log.
         python -c "import struct;f=open(r'out.gn\${{ inputs.target }}\mksnapshot.exe','rb');f.seek(0x3c);pe=struct.unpack('<I',f.read(4))[0];f.seek(pe+24);m=struct.unpack('<H',f.read(2))[0];off=pe+24+(0x48 if m==0x20B else 0x28);w='<Q' if m==0x20B else '<I';f.seek(off);print('mksnapshot.exe SizeOfStackReserve =',struct.unpack(w,f.read(8 if m==0x20B else 4))[0])" || echo "PE diagnostic skipped"
