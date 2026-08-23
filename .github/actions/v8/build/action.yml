@@ -170,14 +170,14 @@ runs:
         rem snapshot generation to the (enlarged) main thread on windows.
         call gn gen .\out.gn\${{ inputs.target }} -args="is_component_build=false is_debug=false target_cpu=""${{ inputs.arch }}"" target_os=""win"" v8_enable_i18n_support=false v8_monolithic=true v8_use_external_startup_data=false v8_enable_pointer_compression=true v8_jitless=false use_custom_libcxx=false treat_warnings_as_errors=false v8_symbol_level=0 v8_enable_sandbox=false v8_enable_concurrent_mksnapshot=false"
 
-        rem Skip ReadOnlyPromotion on windows: cdb proved an infinite
-        rem Promote->IterateBody->VisitObject recursion cycle over a
+        rem Skip ONLY the ReadOnlyPromotion call on windows: cdb proved an
+        rem infinite Promote->IterateBody->VisitObject recursion cycle over a
         rem self-referential Code graph (5-frame repeating stack to overflow),
-        rem independent of stack size. Unpromoted objects serialize fine from
-        rem the mutable heap; only the RO-space optimization is lost.
-        powershell -NoProfile -Command "$p='%GITHUB_WORKSPACE%\v8\v8\src\snapshot\snapshot.cc'; $t=[IO.File]::ReadAllText($p); $old='if (isolate_->heap()->read_only_space()->writable()) {'; if($t.IndexOf($old) -lt 0){ Write-Error 'RO-promotion anchor not found in snapshot.cc'; exit 1 }; [IO.File]::WriteAllText($p, $t.Replace($old,'if (false) {  // win-x64: ReadOnlyPromotion recurses infinitely; serialize from mutable heap instead'))"
+        rem independent of stack size. The RO-space seal that follows must
+        rem still run or serialization asserts.
+        powershell -NoProfile -Command "$p='%GITHUB_WORKSPACE%\v8\v8\src\snapshot\snapshot.cc'; $t=[IO.File]::ReadAllText($p); $old='ReadOnlyPromotion::Promote(isolate_, safepoint_scope, no_gc_from_here_on);'; if($t.IndexOf($old) -lt 0){ Write-Error 'RO-promotion call not found in snapshot.cc'; exit 1 }; [IO.File]::WriteAllText($p, $t.Replace($old,'// win-x64: ReadOnlyPromotion recurses infinitely on self-ref Code graphs; objects serialize from mutable heap.'))"
         if errorlevel 1 exit /b 1
-        findstr /C:"if (false) {" "%GITHUB_WORKSPACE%\v8\v8\src\snapshot\snapshot.cc" >nul || exit /b 1
+        findstr /C:"recurses infinitely" "%GITHUB_WORKSPACE%\v8\v8\src\snapshot\snapshot.cc" >nul || exit /b 1
         rem Route the mksnapshot action through the PE-stack wrapper: swap the
         rem exact launcher substring observed in CI logs inside every generated
         rem ninja file. Fail-closed when nothing matched.
