@@ -185,6 +185,17 @@ runs:
         type mksnap_help.txt
         .\mksnapshot.exe --turbo_instruction_scheduling --stress-turbo-late-spilling --target_os=win --target_arch=x64 --embedded_src gen/embedded.S --predictable --no-use-ic --embedded_variant Default --random-seed 314159265 --startup_src gen/snapshot.cc --no-native-code-counters --concurrent-builtin-generation --concurrent-turbofan-max-threads=0 > mksnap_direct.txt 2>&1 || echo direct-exit-%ERRORLEVEL%
         type mksnap_direct.txt
+        rem Two-phase build: if the direct run produced the snapshot sources,
+        rem resume ninja so the remaining edges (inline-asm conversion and the
+        rem final monolith link) complete and the step succeeds.
+        if exist gen\embedded.S (
+          echo [two-phase] gen\embedded.S present; resuming ninja
+          call ninja -C .\out.gn\${{ inputs.target }} v8_monolith
+          if errorlevel 1 exit /b 1
+        ) else (
+          echo [two-phase] no gen\embedded.S; cannot resume
+          exit /b 1
+        )
         cd ..\..
         rem Diagnostic: print the PE SizeOfStackReserve actually linked into
         rem mksnapshot so stack-related failures are debuggable from the log.
