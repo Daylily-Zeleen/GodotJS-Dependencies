@@ -106,11 +106,11 @@ runs:
         $runPy = Join-Path $env:GITHUB_WORKSPACE "v8\v8\tools\run.py"
         if (-not (Test-Path $runPy)) { throw "missing $runPy" }
         $wrapper = @'
-        import os, struct, sys
+        import os, struct, subprocess, sys
 
+        # Resolve "./mksnapshot" -> mksnapshot.exe and enlarge its main-thread
+        # stack (PE32+ opt+0x48 / PE32 opt+0x28) before execution.
         exe = sys.argv[1]
-        # ninja passes "./mksnapshot"; on Windows the actual image is
-        # mksnapshot.exe (the original run.py appended the suffix internally).
         for candidate in (exe, exe + ".exe"):
             if os.path.exists(candidate):
                 exe = candidate
@@ -122,21 +122,27 @@ runs:
             pe = struct.unpack("<I", f.read(4))[0]
             f.seek(pe + 24)
             magic = struct.unpack("<H", f.read(2))[0]
-            # OptionalHeader follows the 4-byte PE sig + 20-byte COFF header.
-            # SizeOfStackReserve: PE32+ at opt+0x48 (8 bytes), PE32 at opt+0x28
-            # (4 bytes). Absolute: pe + 24 + field offset.
             if magic == 0x20B:
-                off, width = pe + 24 + 0x48, 8
+                off, width, fmt = pe + 24 + 0x48, 8, "<Q"
             elif magic == 0x10B:
-                off, width = pe + 24 + 0x28, 4
+                off, width, fmt = pe + 24 + 0x28, 4, "<I"
             else:
                 raise SystemExit("unknown optional-header magic 0x%X" % magic)
             f.seek(off)
-            cur = struct.unpack("<Q" if width == 8 else "<I", f.read(width))[0]
-            if cur < 0x10000000:
+            if struct.unpack(fmt, f.read(width))[0] < 0x10000000:
                 f.seek(off)
-                f.write(struct.pack("<Q" if width == 8 else "<I", 0x10000000))
-        os.execv(sys.executable, [sys.executable, "../../tools/run.py"] + sys.argv[1:])
+                f.write(struct.pack(fmt, 0x10000000))
+        # Run mksnapshot directly (tools/run.py's spawn layer reproduces an
+        # early-process crash here that a plain invocation does not) and retry
+        # transient NTSTATUS failures.
+        cmd = [os.path.abspath(exe)] + sys.argv[2:]
+        rc = None
+        for attempt in range(3):
+            rc = subprocess.run(cmd).returncode
+            print("[run_mksnapshot_win] attempt %d rc=%s" % (attempt, rc), flush=True)
+            if rc == 0:
+                break
+        sys.exit(rc)
         '@
         $target = Join-Path $env:GITHUB_WORKSPACE "v8\v8\tools\run_mksnapshot_win.py"
         [IO.File]::WriteAllText($target, $wrapper.Replace("`r`n", "`n"))
