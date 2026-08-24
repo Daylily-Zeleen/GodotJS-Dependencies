@@ -24,12 +24,13 @@ fi
 # --- Configure & build ---
 cd node
 bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
+python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" linux
 export CC=gcc-12
 export CXX=g++-12
 ./configure \
   --dest-cpu=x64 \
   --with-intl=small-icu \
-  --with-icu-locales=root,en,en_GB,en_US,es,es_ES,es_MX,fr,fr_CA,fr_FR,ru,ru_RU,zh,zh_Hans,zh_Hans_CN,zh_Hans_HK,zh_Hant,zh_Hant_HK,zh_Hant_TW \
+  --with-icu-locales=root,en,en_001,en_GB,en_US,es,es_419,es_ES,es_MX,fr,fr_CA,fr_FR,ru,ru_RU,zh,zh_Hans,zh_Hans_CN,zh_Hans_HK,zh_Hant,zh_Hant_HK,zh_Hant_TW \
   --without-npm \
   --without-inspector \
   --without-report
@@ -49,7 +50,7 @@ echo "Found: $LIB"
 # --- Stage artifacts ---
 # Layout mirrors moluopro/libnode releases: libnode/<platform>/<arch>/libnode.a
 # with one shared libnode/include/ (node header install flattened to include/).
-LIBDIR="$WORKSPACE/staging/libnode/linux/x64"
+LIBDIR="$WORKSPACE/staging/libnode/linux/x86_64"
 HDRS="$WORKSPACE/staging/libnode/include"
 rm -rf "$HDRS"
 python3 tools/install.py install --headers-only --dest-dir "$HDRS" --prefix "/"
@@ -61,7 +62,7 @@ if [ -f out/Release/config.gypi ]; then
   cp out/Release/config.gypi "$HDRS/"
 fi
 mkdir -p "$LIBDIR"
-cp "$LIB" "$LIBDIR/"
+python3 "$WORKSPACE/Scripts/scripts/node/merge_libnode.py" out/Release "$LIBDIR/libnode.a"
 
 echo "== staging layout =="
 find "$WORKSPACE/staging" -type f | sort

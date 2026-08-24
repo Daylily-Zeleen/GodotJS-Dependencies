@@ -1,6 +1,25 @@
 name: Build LWS
 
 on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/build_lws.yml'
+      - '.github/actions/lws/**'
+      - 'scripts/verify_artifacts.py'
+      - 'scripts/expected_platforms.py'
+      - 'scripts/verify_symbols.py'
+      - '.github/actions/upload/**'
+      - '.github/workflows/build_all.yml'
+  pull_request:
+    paths:
+      - '.github/workflows/build_lws.yml'
+      - '.github/actions/lws/**'
+      - 'scripts/verify_artifacts.py'
+      - 'scripts/expected_platforms.py'
+      - 'scripts/verify_symbols.py'
+      - '.github/actions/upload/**'
+      - '.github/workflows/build_all.yml'
   workflow_dispatch:
     inputs:
       platforms:
@@ -14,6 +33,14 @@ on:
         required: false
         type: string
         default: ''
+
+# Supersede older runs of the same pull request instead of stacking them.
+# head_ref exists only on pull_request; elsewhere run_id keeps groups unique.
+# The platform suffix keeps called instances distinct even when github.workflow
+# resolves to the caller's name inside build_all.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}-lws-${{ inputs.platforms || '' }}
+  cancel-in-progress: true
 
 jobs:
   setup:
@@ -123,11 +150,11 @@ jobs:
         run: |
           if ($env:ACT) { echo "IS_ACT=true" >> $env:GITHUB_ENV } else { echo "IS_ACT=false" >> $env:GITHUB_ENV }
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: Scripts
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: ${{ matrix.platform == 'windows' }}
         with:
           python-version: '3.12'
@@ -135,7 +162,7 @@ jobs:
 
       - name: Cache Android NDK r23c
         if: matrix.platform == 'android'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: android-ndk-r23c
           key: android-ndk-r23c-${{ runner.os }}-v23c

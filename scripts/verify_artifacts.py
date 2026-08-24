@@ -217,7 +217,7 @@ def validate_node_platform(root: Path, platform: str, arch: str, require_commit:
 
 def validate_node(root: Path, selected: list[tuple[str, str]], full: bool, release: bool = False) -> None:
     if full:
-        expected = {node_dir(platform, arch).split("/", 1)[0] for platform, _ in selected}
+        expected = {node_dir(platform, arch).split("/", 1)[0] for platform, arch in selected}
         # The root contains one directory per platform, shared headers, and the
         # two metadata files published by moluopro/libnode.
         reject_unexpected(
@@ -260,9 +260,9 @@ def validate_node(root: Path, selected: list[tuple[str, str]], full: bool, relea
             "copyright": "Copyright (c) 2014 IBM Corporation and Others. All Rights Reserved.",
             "comment": "LibNode ICU profile: trim locale presentation data while preserving shared capability data.",
             "variables": {"locales": {"only": [
-                "root", "en", "en_GB", "en_US", "es", "es_ES", "es_MX", "fr", "fr_CA",
-                "fr_FR", "ru", "ru_RU", "zh", "zh_Hans", "zh_Hans_CN", "zh_Hans_HK",
-                "zh_Hant", "zh_Hant_HK", "zh_Hant_TW",
+                "en", "en_001", "en_GB", "en_US", "es", "es_419", "es_ES", "es_MX",
+                "fr", "fr_CA", "fr_FR", "root", "ru", "ru_RU", "zh", "zh_Hans",
+                "zh_Hans_CN", "zh_Hans_HK", "zh_Hant", "zh_Hant_HK", "zh_Hant_TW",
             ]}},
             "trees": {
                 "ROOT": "locales", "coll": "locales", "curr": "locales", "lang": "locales",

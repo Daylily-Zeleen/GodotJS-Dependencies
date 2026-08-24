@@ -1,6 +1,27 @@
 name: Build Node
 
 on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/build_node.yml'
+      - '.github/actions/node/**'
+      - 'scripts/node/**'
+      - 'scripts/verify_artifacts.py'
+      - 'scripts/expected_platforms.py'
+      - 'scripts/verify_symbols.py'
+      - '.github/actions/upload/**'
+      - '.github/workflows/build_all.yml'
+  pull_request:
+    paths:
+      - '.github/workflows/build_node.yml'
+      - '.github/actions/node/**'
+      - 'scripts/node/**'
+      - 'scripts/verify_artifacts.py'
+      - 'scripts/expected_platforms.py'
+      - 'scripts/verify_symbols.py'
+      - '.github/actions/upload/**'
+      - '.github/workflows/build_all.yml'
   workflow_dispatch:
     inputs:
       node_version:
@@ -26,6 +47,14 @@ on:
         required: false
         type: string
         default: ''
+
+# Supersede older runs of the same pull request instead of stacking them.
+# head_ref exists only on pull_request; elsewhere run_id keeps groups unique.
+# The input suffix keeps called instances distinct even when github.workflow
+# resolves to the caller's name inside build_all.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}-node-${{ inputs.node_version || '' }}-${{ inputs.platforms || '' }}
+  cancel-in-progress: true
 
 jobs:
   setup:
@@ -130,7 +159,7 @@ jobs:
     timeout-minutes: 300
     runs-on: ${{ matrix.runner }}
     env:
-      NODE_VERSION: ${{ inputs.node_version || github.event.inputs.node_version }}
+      NODE_VERSION: ${{ inputs.node_version || github.event.inputs.node_version || 'v24.x' }}
       # setup job gates the ohos combo on these vars; the build job must see
       # them too or build-ohos.sh fails with 'OHOS_NATIVE_HOME is not set'.
       OHOS_NATIVE_HOME: ${{ vars.OHOS_NATIVE_HOME }}
@@ -146,11 +175,11 @@ jobs:
         run: |
           if ($env:ACT) { echo "IS_ACT=true" >> $env:GITHUB_ENV } else { echo "IS_ACT=false" >> $env:GITHUB_ENV }
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: Scripts
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: ${{ matrix.platform == 'windows' || matrix.platform == 'macos' || matrix.platform == 'ios' }}
         with:
           python-version: '3.12'
@@ -158,7 +187,7 @@ jobs:
 
       - name: Cache Android NDK r26b
         if: matrix.platform == 'android'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: android-ndk-r26b
           key: android-ndk-r26b-${{ runner.os }}-v26b

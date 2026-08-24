@@ -38,6 +38,7 @@ fi
 # --- Configure & build with NDK cross toolchain ---
 cd node
 bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
+python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" android
 case "$DEST_CPU" in
   arm64) NDK_ARCH="arm64" ;;
   arm)   NDK_ARCH="arm" ;;
@@ -220,7 +221,7 @@ s = path.read_text(encoding='utf-8')
 old = 'os.system("./configure --dest-cpu=" + DEST_CPU + " --dest-os=android --openssl-no-asm --cross-compiling")'
 new = ('os.system("./configure --dest-cpu=" + DEST_CPU + " --dest-os=android "\n'
        '          "--with-intl=small-icu "\n'
-       '          "--with-icu-locales=root,en,en_GB,en_US,es,es_ES,es_MX,fr,fr_CA,fr_FR,ru,ru_RU,zh,zh_Hans,zh_Hans_CN,zh_Hans_HK,zh_Hant,zh_Hant_HK,zh_Hant_TW "\n'
+       '          "--with-icu-locales=root,en,en_001,en_GB,en_US,es,es_419,es_ES,es_MX,fr,fr_CA,fr_FR,ru,ru_RU,zh,zh_Hans,zh_Hans_CN,zh_Hans_HK,zh_Hant,zh_Hant_HK,zh_Hant_TW "\n'
        '          "--openssl-no-asm --cross-compiling")')
 if old not in s:
     raise SystemExit('ERROR: unexpected android_configure.py layout; refusing an unverified ICU patch')
@@ -289,7 +290,7 @@ if [ -f out/Release/config.gypi ]; then
   cp out/Release/config.gypi "$HDRS/"
 fi
 mkdir -p "$LIBDIR"
-cp "$LIB" "$LIBDIR/"
+python3 "$WORKSPACE/Scripts/scripts/node/merge_libnode.py" out/Release "$LIBDIR/libnode.a"
 
 echo "== staging layout =="
 find "$WORKSPACE/staging" -type f | sort

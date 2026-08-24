@@ -1,6 +1,27 @@
 name: Build V8
 
 on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/build_v8.yml'
+      - '.github/actions/v8/**'
+      - 'config/v8/**'
+      - 'scripts/verify_artifacts.py'
+      - 'scripts/expected_platforms.py'
+      - 'scripts/verify_symbols.py'
+      - '.github/actions/upload/**'
+      - '.github/workflows/build_all.yml'
+  pull_request:
+    paths:
+      - '.github/workflows/build_v8.yml'
+      - '.github/actions/v8/**'
+      - 'config/v8/**'
+      - 'scripts/verify_artifacts.py'
+      - 'scripts/expected_platforms.py'
+      - 'scripts/verify_symbols.py'
+      - '.github/actions/upload/**'
+      - '.github/workflows/build_all.yml'
   workflow_dispatch:
     inputs:
       v8_version:
@@ -26,6 +47,14 @@ on:
         required: false
         type: string
         default: ''
+
+# Supersede older runs of the same pull request instead of stacking them.
+# head_ref exists only on pull_request; elsewhere run_id keeps groups unique.
+# The input suffix keeps called instances distinct even when github.workflow
+# resolves to the caller's name inside build_all.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}-${{ inputs.v8_version || '' }}
+  cancel-in-progress: true
 
 jobs:
   setup:
@@ -125,7 +154,7 @@ jobs:
     needs: setup
     runs-on: ${{ matrix.runner }}
     env:
-      V8_VERSION: ${{ inputs.v8_version || github.event.inputs.v8_version }}
+      V8_VERSION: ${{ inputs.v8_version || github.event.inputs.v8_version || '13.5.119' }}
     strategy:
       fail-fast: false
       matrix:
@@ -137,18 +166,18 @@ jobs:
         run: |
           if ($env:ACT) { echo "IS_ACT=true" >> $env:GITHUB_ENV } else { echo "IS_ACT=false" >> $env:GITHUB_ENV }
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: Scripts
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: ${{ !startsWith(matrix.platform, 'macos') || vars.HOST_MACOS != 'true' }}
         with:
           python-version: '3.12'
           architecture: 'x64'
 
       - name: Cache depot_tools
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: depot_tools
           key: depot_tools-${{ runner.os }}-${{ github.ref_name }}
