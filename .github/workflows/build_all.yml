@@ -127,11 +127,11 @@ jobs:
       OHOS_NATIVE_HOME: ${{ vars.OHOS_NATIVE_HOME }}
       OHOS_SDK_URL: ${{ vars.OHOS_SDK_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: Scripts
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: staging/
           merge-multiple: true

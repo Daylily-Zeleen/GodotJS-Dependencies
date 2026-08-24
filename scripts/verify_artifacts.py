@@ -217,7 +217,7 @@ def validate_node_platform(root: Path, platform: str, arch: str, require_commit:
 
 def validate_node(root: Path, selected: list[tuple[str, str]], full: bool, release: bool = False) -> None:
     if full:
-        expected = {node_dir(platform, arch).split("/", 1)[0] for platform, _ in selected}
+        expected = {node_dir(platform, arch).split("/", 1)[0] for platform, arch in selected}
         # The root contains one directory per platform, shared headers, and the
         # two metadata files published by moluopro/libnode.
         reject_unexpected(

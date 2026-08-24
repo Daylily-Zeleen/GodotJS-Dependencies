@@ -166,18 +166,18 @@ jobs:
         run: |
           if ($env:ACT) { echo "IS_ACT=true" >> $env:GITHUB_ENV } else { echo "IS_ACT=false" >> $env:GITHUB_ENV }
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: Scripts
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: ${{ !startsWith(matrix.platform, 'macos') || vars.HOST_MACOS != 'true' }}
         with:
           python-version: '3.12'
           architecture: 'x64'
 
       - name: Cache depot_tools
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: depot_tools
           key: depot_tools-${{ runner.os }}-${{ github.ref_name }}
