@@ -57,8 +57,18 @@ runs:
         fi
 
         # --- depot_tools ---
+        git_retry() {
+          local tries=5 delay=15 cmd=("$@")
+          for i in $(seq 1 "$tries"); do
+            if "${cmd[@]}"; then return 0; fi
+            echo "git_retry: attempt $i/$tries failed, retrying in ${delay}s" >&2
+            sleep "$delay"
+          done
+          echo "git_retry: all $tries attempts failed" >&2
+          return 1
+        }
         if [ ! -d "$GITHUB_WORKSPACE/depot_tools" ]; then
-          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          git_retry git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
         fi
         export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
         cd "$GITHUB_WORKSPACE/depot_tools"
@@ -67,7 +77,7 @@ runs:
         # --- fetch v8 ---
         mkdir -p "$GITHUB_WORKSPACE/v8"
         cd "$GITHUB_WORKSPACE/v8"
-        fetch --nohooks --nohistory v8
+        git_retry fetch --nohooks --nohistory v8
 
         # --- target_os for cross builds ---
         if [ "${{ inputs.platform }}" = "android" ]; then
@@ -81,7 +91,7 @@ runs:
         # --nohooks: vpython hook fails on macos arm64 (numpy wheel missing from
         # chrome-python-ar for that platform); hooks are not needed to build.
         cd v8
-        git fetch origin refs/tags/${{ inputs.v8_version }}
+        git_retry git fetch origin refs/tags/${{ inputs.v8_version }}
         git checkout FETCH_HEAD
         gclient sync -D --force --reset --nohooks
         # Best-effort runhooks: some generators need it, but never fail the build

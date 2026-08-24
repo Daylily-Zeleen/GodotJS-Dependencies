@@ -16,12 +16,22 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        git_retry() {
+          local tries=5 delay=15 cmd=("$@")
+          for i in $(seq 1 "$tries"); do
+            if "${cmd[@]}"; then return 0; fi
+            echo "git_retry: attempt $i/$tries failed, retrying in ${delay}s" >&2
+            sleep "$delay"
+          done
+          echo "git_retry: all $tries attempts failed" >&2
+          return 1
+        }
         cd "$GITHUB_WORKSPACE"
         if [ ! -d node/.git ]; then
-          git clone --depth 1 --branch "${{ inputs.node_version }}" https://github.com/nodejs/node.git
+          git_retry git clone --depth 1 --branch "${{ inputs.node_version }}" https://github.com/nodejs/node.git
         else
           cd node
-          git fetch --depth 1 origin "${{ inputs.node_version }}" || git fetch --depth 1 origin tag "${{ inputs.node_version }}" || true
+          git_retry git fetch --depth 1 origin "${{ inputs.node_version }}" || git_retry git fetch --depth 1 origin tag "${{ inputs.node_version }}" || true
           git checkout "${{ inputs.node_version }}" || true
           cd "$GITHUB_WORKSPACE"
         fi
@@ -34,9 +44,20 @@ runs:
       shell: pwsh
       run: |
         Set-StrictMode -Version Latest
+        function Invoke-GitRetry {
+          param([scriptblock]$Body)
+          $tries = 5; $delay = 15
+          for ($i = 1; $i -le $tries; $i++) {
+            & $Body
+            if ($LASTEXITCODE -eq 0) { return }
+            Write-Host "git_retry: attempt $i/$tries failed, retrying in ${delay}s"
+            Start-Sleep -Seconds $delay
+          }
+          throw "git_retry: all $tries attempts failed"
+        }
         cd $env:GITHUB_WORKSPACE
         if (-not (Test-Path "node/.git")) {
-          git clone --depth 1 --branch "${{ inputs.node_version }}" https://github.com/nodejs/node.git
+          Invoke-GitRetry { git clone --depth 1 --branch "${{ inputs.node_version }}" https://github.com/nodejs/node.git }
         }
         cd node
         git checkout "${{ inputs.node_version }}"
