@@ -87,8 +87,14 @@ jobs:
             {"platform": "linux", "arch": "x86_64", "runner": "ubuntu-22.04", "target": "x64.release", "staging": "linux.x86_64.release", "artifact": "prebuilt_v8_linux_x86_64"},
             {"platform": "linux", "arch": "arm64", "runner": "ubuntu-22.04", "target": "arm64.release", "staging": "linux.arm64.release", "artifact": "prebuilt_v8_linux_arm64"},
             # macos
-            {"platform": "macos", "arch": "arm64", "runner": "macos-latest", "target": "arm64.release", "staging": "macos.arm64.release", "artifact": "prebuilt_v8_macos_arm64"},
-            {"platform": "macos", "arch": "x86_64", "runner": "macos-latest", "target": "x64.release", "staging": "macos.x86_64.release", "artifact": "prebuilt_v8_macos_x86_64"},
+            # macos-15 (Xcode 16.4 / MacOSX15 SDK), deliberately NOT macos-latest:
+            # macos-latest moved to the macOS 26 image, whose libc++ headers use
+            # __builtin_clzg/__builtin_ctzg. V8 12.4.x ships its own clang
+            # (llvmorg-19-init) that predates those builtins, so every V8 source
+            # file fails to compile against that SDK. Pinning to the SDK the
+            # 12.4.x prebuilts were produced with keeps both Apple legs green.
+            {"platform": "macos", "arch": "arm64", "runner": "macos-15", "target": "arm64.release", "staging": "macos.arm64.release", "artifact": "prebuilt_v8_macos_arm64"},
+            {"platform": "macos", "arch": "x86_64", "runner": "macos-15", "target": "x64.release", "staging": "macos.x86_64.release", "artifact": "prebuilt_v8_macos_x86_64"},
             # windows (arch = gn arch)
             {"platform": "windows", "arch": "x64", "runner": "windows-2022", "target": "x64.release", "staging": "windows_x86_64_release", "artifact": "prebuilt_v8_windows_x86_64"},
             {"platform": "windows", "arch": "arm64", "runner": "windows-2022", "target": "arm64.release", "staging": "windows_arm64_release", "artifact": "prebuilt_v8_windows_arm64"},
@@ -97,7 +103,8 @@ jobs:
             {"platform": "android", "arch": "arm32", "runner": "ubuntu-22.04", "target": "arm.release", "staging": "android.arm32.release", "artifact": "prebuilt_v8_android_arm32"},
             {"platform": "android", "arch": "x86_64", "runner": "ubuntu-22.04", "target": "x64.release", "staging": "android.x86_64.release", "artifact": "prebuilt_v8_android_x86_64"},
             # ios (x86_64 simulator dropped: Xcode 26 SDK no longer supports it)
-            {"platform": "ios", "arch": "arm64", "runner": "macos-latest", "target": "arm64.release", "staging": "ios.arm64.release", "artifact": "prebuilt_v8_ios_arm64"},
+            # macos-15 for the same libc++/bundled-clang reason as the macOS legs.
+            {"platform": "ios", "arch": "arm64", "runner": "macos-15", "target": "arm64.release", "staging": "ios.arm64.release", "artifact": "prebuilt_v8_ios_arm64"},
           ]
 
           # Parse platforms: entries can be "platform" (all arches) or "platform-arch" (e.g. linux-x86_64)

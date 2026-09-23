@@ -30,36 +30,59 @@ $gypText = $gypText -replace "'--delete-tmp',", " "
 # Node >= 24 forces the ClangCL toolchain (vcbuild.bat), and an ICU genccode
 # built by clang refuses to emit a Windows .obj without an explicit CPU
 # architecture (-c). Wire '-c <(target_arch)' into every Windows genccode
-# action that lacks it (upstream only set it on one of the three actions).
+# action that lacks it.
 # ICU < 77 does not know this option, so gate on the node version.
+#
+# NOTE: v24.x is a moving branch and upstream has been adding '-c' to these
+# actions over time (it used to be 1 of 3, later 2 of 3). Do NOT assert a
+# hard-coded number of insertions; assert the actual invariant instead: after
+# patching, every '<@(icu_asm_opts)', # -o line must be followed by '-c'.
 if ($Branch -notmatch '^v(\d+)') { throw "Cannot parse Node major version from branch '$Branch'" }
 $NodeMajor = [int]$Matches[1]
+$icuArchOptAnchor = "^([ \t]*)'<@\(icu_asm_opts\)', # -o\s*$"
+$icuArchOptLine = "'-c', '<(target_arch)',"
 if ($NodeMajor -ge 24) {
   # NOTE: use String.Split(); the -split operator with a ", -1" argument
   # silently returns the unsplit string in some argument-parsing paths.
   $gypLines = $gypText.Split("`n")
   $patchedLines = New-Object System.Collections.Generic.List[string]
   $inserted = 0
+  $anchors = 0
   for ($idx = 0; $idx -lt $gypLines.Count; $idx++) {
     $line = $gypLines[$idx]
     $patchedLines.Add($line)
-    if ($line -match "^([ \t]*)'<@\(icu_asm_opts\)', # -o\s*$") {
+    if ($line -match $icuArchOptAnchor) {
+      $anchors++
       $indent = $Matches[1]
       $next = if ($idx + 1 -lt $gypLines.Count) { $gypLines[$idx + 1] } else { "" }
       if ($next -notmatch "^[ \t]*'-c',") {
-        $patchedLines.Add("$indent'-c', '<(target_arch)',")
+        $patchedLines.Add("$indent$icuArchOptLine")
         $inserted++
       }
     }
   }
-  if ($inserted -ne 2) { throw "Expected to add genccode -c to exactly two Windows ICU actions, found $inserted" }
+  # Fail closed on the *invariant*, never on a hard-coded insertion count:
+  # upstream (v24.x) has been adding '-c' to these actions over time, so the
+  # only thing that must hold is "there is at least one such action".
+  if ($anchors -eq 0) { throw "No genccode '<@(icu_asm_opts)', # -o action found in icu-generic.gyp; refusing an unverified patch" }
+  Write-Host "ICU genccode -c patch: $anchors Windows action(s), added '-c' to $inserted"
   $gypText = $patchedLines -join "`n"
 }
 [IO.File]::WriteAllText($IcuGyp, $gypText, [Text.UTF8Encoding]::new($false))
 if ((Get-Content -Raw $IcuGyp) -match '--delete-tmp') { throw "Failed to disable ICU temporary-data deletion" }
 if ($NodeMajor -ge 24) {
-  $cpuArchEntries = [regex]::Matches((Get-Content -Raw $IcuGyp), [regex]::Escape("'-c', '<(target_arch)',")).Count
-  if ($cpuArchEntries -lt 3) { throw "genccode -c patch incomplete: found $cpuArchEntries entries, expected at least 3" }
+  # Invariant, not a magic total: every '<@(icu_asm_opts)', # -o line must now
+  # be followed by '-c'. Upstream has changed how many of those actions ship
+  # with '-c' already, so compare the two counts instead of a fixed number.
+  $patchedRaw = Get-Content -Raw $IcuGyp
+  $archOptCount = [regex]::Matches(
+    $patchedRaw,
+    $icuArchOptAnchor,
+    [System.Text.RegularExpressions.RegexOptions]::Multiline).Count
+  $cpuArchEntries = [regex]::Matches($patchedRaw, [regex]::Escape($icuArchOptLine)).Count
+  if ($cpuArchEntries -lt $archOptCount) {
+    throw "genccode -c patch incomplete: $cpuArchEntries '-c' entries for $archOptCount Windows genccode action(s)"
+  }
 }
 $IcuTrim = Join-Path (Get-Location) "tools/icu/icutrim.py"
 if (-not (Test-Path $IcuTrim)) { throw "Missing ICU trim tool: $IcuTrim" }
