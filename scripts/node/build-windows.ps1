@@ -91,6 +91,8 @@ $patchedTrimText = Get-Content -Raw $IcuTrim
 if (($patchedTrimText -split [regex]::Escape($oldTrimGuard)).Count -ne 1) { throw "Old ICU tmpdir guard remains after patch" }
 if ($patchedTrimText -notmatch 'if os\.listdir\(options\.tmpdir\):') { throw "Failed to patch empty ICU tmpdir handling" }
 python "$Workspace\Scripts\scripts\node\patch_rtti.py" (Get-Location) windows
+python "$Workspace\Scripts\scripts\node\patch_libuv_console.py" (Get-Location)
+if ($LASTEXITCODE -ne 0) { throw "libuv console shutdown patch failed with exit code $LASTEXITCODE" }
 
 # --- Configure & build with MSVC ---
 # Node ships vcbuild.bat which wraps configure + msbuild for the VS toolchain.
