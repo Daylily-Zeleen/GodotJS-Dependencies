@@ -240,7 +240,15 @@ jobs:
           node_version: ${{ env.NODE_VERSION }}
           platform: ${{ matrix.platform }}
           arch: ${{ matrix.arch }}
-          ccache_dir: ${{ runner.os == 'Windows' && 'ccache' || '~/.ccache' }}
+          # Windows intentionally passes no ccache_dir. node's --use-ccache-win
+          # routes /p:CLToolPath=<dir> to MSBuild, which appends clang-cl.exe to
+          # it, so that directory must contain a clang-cl.exe (ccache masquerades
+          # as the compiler via argv[0]) - the chocolatey package only ships
+          # ccache.exe. Wiring that up needs its own verification and cannot be
+          # checked locally, so this leg builds without a compiler cache; the
+          # unix legs use ccache via CCACHE_DIR, and v8 uses the cached source
+          # tree.
+          ccache_dir: ''
 
       - name: Upload
         uses: ./Scripts/.github/actions/upload
