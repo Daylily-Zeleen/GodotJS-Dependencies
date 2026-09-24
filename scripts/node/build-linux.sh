@@ -31,6 +31,16 @@ python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" linux
 python3 "$WORKSPACE/Scripts/scripts/node/patch_pic.py" "$PWD" linux
 export CC=gcc-12
 export CXX=g++-12
+# Route the compilers through ccache when available. The CI job restores
+# CCACHE_DIR, so an unchanged node source reuses almost every object: the
+# windows leg spends ~51 of its 52 minutes compiling, and the unix legs are
+# dominated by the same work. gyp's make generator only honours CC/CXX, so the
+# wrapper has to live in the compiler command itself.
+if command -v ccache >/dev/null 2>&1; then
+  export CC="ccache $CC"
+  export CXX="ccache $CXX"
+  echo "ccache enabled for the linux node build ($CC)"
+fi
 ./configure \
   --dest-cpu=x64 \
   --with-intl=small-icu \

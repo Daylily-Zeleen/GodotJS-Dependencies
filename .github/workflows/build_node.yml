@@ -222,8 +222,15 @@ jobs:
       - name: Cache ccache
         uses: actions/cache@v6
         with:
-          path: ${{ runner.os == 'Windows' && 'ccache' || '~/.ccache' }}
-          key: ccache-node-${{ runner.os }}-${{ env.NODE_VERSION }}-${{ hashFiles('Scripts/.github/actions/node/build/action.yml') }}
+          # CCACHE_DIR is set explicitly by the build action to this location, so
+          # the cache path and the tool agree (ccache's own default differs per
+          # platform: ~/.ccache on Linux, ~/Library/Caches/ccache on macOS).
+          path: ~/.ccache
+          # The run_id belongs in the key: actions/cache never overwrites an
+          # existing key, so a key that stays constant across runs would save
+          # once and then never publish the objects later runs compiled. Every
+          # run saves a fresh entry; restore-keys give it the previous warm start.
+          key: ccache-node-${{ runner.os }}-${{ env.NODE_VERSION }}-${{ github.run_id }}
           restore-keys: |
             ccache-node-${{ runner.os }}-${{ env.NODE_VERSION }}-
             ccache-node-${{ runner.os }}-
@@ -240,7 +247,7 @@ jobs:
           node_version: ${{ env.NODE_VERSION }}
           platform: ${{ matrix.platform }}
           arch: ${{ matrix.arch }}
-          ccache_dir: ${{ runner.os == 'Windows' && 'ccache' || '' }}
+          ccache_dir: ${{ runner.os == 'Windows' && 'ccache' || '~/.ccache' }}
 
       - name: Upload
         uses: ./Scripts/.github/actions/upload

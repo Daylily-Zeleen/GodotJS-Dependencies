@@ -21,8 +21,28 @@ runs:
     - name: Build node (unix)
       if: runner.os != 'Windows'
       shell: bash
+      env:
+        # Compilation dominates this job; a warm ccache is the main lever.
+        # Explicit path so it matches the cached directory (~/.ccache).
+        CCACHE_DIR: ${{ github.workspace }}/../.ccache
+        CCACHE_MAXSIZE: 5G
+        CCACHE_COMPRESS: 'true'
       run: |
         set -euo pipefail
+        # Point CCACHE_DIR at a real path and make it visible to the build
+        # scripts; ccache's own default location differs per platform.
+        export CCACHE_DIR="$HOME/.ccache"
+        mkdir -p "$CCACHE_DIR"
+        echo "CCACHE_DIR=$CCACHE_DIR" >> "$GITHUB_ENV"
+        if command -v ccache >/dev/null 2>&1; then
+          ccache --version | head -1
+          ccache --zero-stats || true
+          # Each build-<platform>.sh wraps its own compiler (gyp's make
+          # generator only honours CC/CXX, and linux/macos pin specific
+          # compilers), so there is nothing to inject from here.
+        else
+          echo "ccache not installed; building without it"
+        fi
         case "${{ inputs.platform }}" in
           linux)
             bash "$GITHUB_WORKSPACE/Scripts/scripts/node/build-linux.sh" "${{ inputs.node_version }}" "${{ inputs.arch }}"
@@ -40,7 +60,6 @@ runs:
             bash "$GITHUB_WORKSPACE/Scripts/scripts/node/build-ohos.sh" "${{ inputs.node_version }}"
             ;;
         esac
-        mkdir -p "$GITHUB_WORKSPACE/staging/libnode/${{ inputs.platform }}/${{ inputs.platform == 'windows' && 'x64' || inputs.arch }}"
         git -C "$GITHUB_WORKSPACE/node" rev-parse HEAD > "$GITHUB_WORKSPACE/staging/libnode/${{ inputs.platform }}/${{ inputs.platform == 'windows' && 'x64' || inputs.arch }}/node-commit.txt"
         python3 "$GITHUB_WORKSPACE/Scripts/scripts/verify_artifacts.py" node \
           --root "$GITHUB_WORKSPACE/staging/libnode" \

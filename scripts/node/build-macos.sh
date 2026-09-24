@@ -7,6 +7,14 @@ NODE_BRANCH="${1:-v24.x}"
 DEST_CPU="${2:-arm64}"
 WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
 
+# Route the compilers through ccache when available; the CI job restores
+# CCACHE_DIR so an unchanged node source reuses almost every object.
+if command -v ccache >/dev/null 2>&1; then
+  export CC="ccache $(xcrun --find clang 2>/dev/null || echo clang)"
+  export CXX="ccache $(xcrun --find clang++ 2>/dev/null || echo clang++)"
+  echo "ccache enabled for the macos node build ($CC)"
+fi
+
 # --- Ensure CMake/python available (macOS runners) ---
 if ! command -v python3 >/dev/null 2>&1; then
   brew install python || true
