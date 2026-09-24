@@ -192,6 +192,42 @@ jobs:
           path: android-ndk-r26b
           key: android-ndk-r26b-${{ runner.os }}-v26b
 
+      # Compilation dominates this job (a windows leg spends ~51 of its 52
+      # minutes in the compiler). ccache keys on content, so re-running with an
+      # unchanged node source - which is the normal case when only a patch
+      # script or a verify script changed - reuses almost every object. The key
+      # deliberately excludes the patch scripts: their edits change a handful of
+      # files, and letting content hashing invalidate just those is the point.
+      - name: Install ccache
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ runner.os }}" in
+            Windows)
+              choco install ccache -y --no-progress
+              # choco shims land in a dir that is already on PATH.
+              ccache --version | head -1
+              ;;
+            Linux)
+              sudo apt-get update
+              sudo apt-get install -y --no-install-recommends ccache
+              ccache --version | head -1
+              ;;
+            macOS)
+              brew install ccache
+              ccache --version | head -1
+              ;;
+          esac
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.os == 'Windows' && 'ccache' || '~/.ccache' }}
+          key: ccache-node-${{ runner.os }}-${{ env.NODE_VERSION }}-${{ hashFiles('Scripts/.github/actions/node/build/action.yml') }}
+          restore-keys: |
+            ccache-node-${{ runner.os }}-${{ env.NODE_VERSION }}-
+            ccache-node-${{ runner.os }}-
+
       - name: Fetch node (${{ matrix.platform }} ${{ matrix.arch }})
         uses: ./Scripts/.github/actions/node/fetch
         with:
@@ -204,6 +240,7 @@ jobs:
           node_version: ${{ env.NODE_VERSION }}
           platform: ${{ matrix.platform }}
           arch: ${{ matrix.arch }}
+          ccache_dir: ${{ runner.os == 'Windows' && 'ccache' || '' }}
 
       - name: Upload
         uses: ./Scripts/.github/actions/upload

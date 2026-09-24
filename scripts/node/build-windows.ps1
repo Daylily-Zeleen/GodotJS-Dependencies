@@ -3,7 +3,11 @@
 # Usage: build-windows.ps1 [-Branch <node_branch>] [-DestCpu <cpu>]
 param(
   [string]$Branch = "v24.x",
-  [string]$DestCpu = "x64"
+  [string]$DestCpu = "x64",
+  # Optional ccache directory. Compilation dominates this build (~51 of 52
+  # minutes), so a warm cache is the difference between a 1-minute and a
+  # 50-minute iteration. Empty = no ccache.
+  [string]$CcacheDir = ""
 )
 $ErrorActionPreference = "Stop"
 $Workspace = if ($env:GITHUB_WORKSPACE) { $env:GITHUB_WORKSPACE } else { (Get-Location).Path }
@@ -142,13 +146,33 @@ if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
   # refresh PATH so nasm is visible to vcbuild.bat
   $env:Path = "C:\Program Files\NASM;" + $env:Path
 }
+$ccacheArgs = @()
+if ($CcacheDir -ne "") {
+  $ccacheExe = (Get-Command ccache -ErrorAction SilentlyContinue).Source
+  if (-not $ccacheExe) {
+    # Not fatal: a missing cache only costs time. Failing here would waste a
+    # 50-minute build to report an optimisation being unavailable.
+    Write-Warning "CcacheDir='$CcacheDir' was requested but ccache is not installed; building without it"
+  } else {
+    New-Item -ItemType Directory -Force -Path $CcacheDir | Out-Null
+    $env:CCACHE_DIR = (Resolve-Path $CcacheDir).Path
+    # Big enough that a full node+v8 object set fits; the workflow caches this dir.
+    $env:CCACHE_MAXSIZE = "5G"
+    $env:CCACHE_COMPRESS = "true"
+    # node's --use-ccache-win takes the DIRECTORY holding ccache.exe.
+    $ccacheArgs = @("ccache", $ccacheExe)
+    Write-Host "ccache enabled: $ccacheExe  (CCACHE_DIR=$env:CCACHE_DIR)"
+    & $ccacheExe --zero-stats 2>$null | Out-Null
+  }
+}
 if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
   Write-Host "NASM still unavailable, building with openssl-no-asm"
-  & ".\vcbuild.bat" $VcCpu release small-icu openssl-no-asm
+  & ".\vcbuild.bat" $VcCpu release small-icu openssl-no-asm @ccacheArgs
 } else {
-  & ".\vcbuild.bat" $VcCpu release small-icu
+  & ".\vcbuild.bat" $VcCpu release small-icu @ccacheArgs
 }
 if ($LASTEXITCODE -ne 0) { throw "vcbuild.bat failed with exit code $LASTEXITCODE" }
+if ($CcacheDir -ne "") { & $ccacheExe --show-stats }
 # PowerShell does not abort on native-command failures, so the verification
 # scripts must be checked explicitly or their failures are silently ignored.
 python "$Workspace\Scripts\scripts\node\verify_icu_config.py" "config.gypi"

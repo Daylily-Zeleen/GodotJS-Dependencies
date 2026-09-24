@@ -10,6 +10,10 @@ inputs:
   arch:
     description: 'Target arch: x86_64 | arm64 | arm32'
     required: true
+  ccache_dir:
+    description: 'Optional ccache directory (Windows only; node''s --use-ccache-win wants an explicit path)'
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -54,7 +58,8 @@ runs:
         Set-StrictMode -Version Latest
         & "$env:GITHUB_WORKSPACE\Scripts\scripts\node\build-windows.ps1" `
           -Branch "${{ inputs.node_version }}" `
-          -DestCpu "${{ inputs.arch }}"
+          -DestCpu "${{ inputs.arch }}" `
+          -CcacheDir "${{ inputs.ccache_dir }}"
         $nodeRoot = Join-Path $env:GITHUB_WORKSPACE "staging/libnode/windows/x64"
         New-Item -ItemType Directory -Force -Path $nodeRoot | Out-Null
         git -C (Join-Path $env:GITHUB_WORKSPACE "node") rev-parse HEAD | Out-File -Encoding ascii (Join-Path $nodeRoot "node-commit.txt")

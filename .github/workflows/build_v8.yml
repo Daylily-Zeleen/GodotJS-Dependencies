@@ -187,9 +187,12 @@ jobs:
         uses: actions/cache@v6
         with:
           path: depot_tools
-          key: depot_tools-${{ runner.os }}-${{ github.ref_name }}
+          # Keyed by runner OS only: depot_tools is a fetched tool, and including
+          # the branch name (as before) meant every run on a new branch got a
+          # cold cache and re-fetched it.
+          key: depot_tools-${{ runner.os }}-
           restore-keys: |
-            depot_tools-${{ runner.os }}-
+            depot_tools-
 
       - name: Fetch v8 (${{ matrix.platform }} ${{ matrix.arch }})
         uses: ./Scripts/.github/actions/v8/fetch
