@@ -75,21 +75,34 @@ runs:
         gclient
 
         # --- fetch v8 ---
-        mkdir -p "$GITHUB_WORKSPACE/v8"
-        cd "$GITHUB_WORKSPACE/v8"
-        git_retry fetch --nohooks --nohistory v8
+        # `fetch --nohooks --nohistory v8` plus the first `gclient sync` is the
+        # single most expensive step in this workflow: measured on the windows
+        # leg it took 40 of the job's 42 minutes, before any compilation started.
+        # The workflow caches v8/ and depot_tools/, so on a re-run (same runner
+        # OS + version, which is the normal case while iterating on these
+        # scripts) the tree is already present and only the requested tag needs
+        # aligning - a few minutes instead of 40.
+        if [ -d "$GITHUB_WORKSPACE/v8/v8/.git" ]; then
+          echo "v8 source tree restored from cache; aligning to ${{ inputs.v8_version }}"
+        else
+          echo "no cached v8 source tree; performing the full fetch"
+          mkdir -p "$GITHUB_WORKSPACE/v8"
+          cd "$GITHUB_WORKSPACE/v8"
+          git_retry fetch --nohooks --nohistory v8
 
-        # --- target_os for cross builds ---
-        if [ "${{ inputs.platform }}" = "android" ]; then
-          echo "target_os = ['android']" >> .gclient
-        elif [ "${{ inputs.platform }}" = "ios" ]; then
-          echo "target_os = ['ios']" >> .gclient
+          # --- target_os for cross builds ---
+          # Written once, when the tree is created; .gclient is part of the
+          # cached tree afterwards, so re-appending would duplicate the entry.
+          if [ "${{ inputs.platform }}" = "android" ]; then
+            echo "target_os = ['android']" >> .gclient
+          elif [ "${{ inputs.platform }}" = "ios" ]; then
+            echo "target_os = ['ios']" >> .gclient
+          fi
         fi
+        cd "$GITHUB_WORKSPACE/v8"
         cat .gclient
 
         # --- checkout requested version + sync ---
-        # --nohooks: vpython hook fails on macos arm64 (numpy wheel missing from
-        # chrome-python-ar for that platform); hooks are not needed to build.
         cd v8
         git_retry git fetch origin refs/tags/${{ inputs.v8_version }}
         git checkout FETCH_HEAD
@@ -118,10 +131,19 @@ runs:
         call gclient
 
         cd ..
-        mkdir v8
-        cd v8
-        call fetch --nohooks --nohistory v8
-        cd v8
+        rem The workflow caches v8/ (see build_v8.yml): re-running with the same
+        rem runner OS and version - the normal case while iterating on these
+        rem scripts - skips the expensive initial fetch and only aligns the tag.
+        if exist v8\v8\.git (
+          echo v8 source tree restored from cache; aligning to ${{ inputs.v8_version }}
+        ) else (
+          echo no cached v8 source tree; performing the full fetch
+          if not exist v8 mkdir v8
+          cd v8
+          call fetch --nohooks --nohistory v8
+          cd ..
+        )
+        cd v8\v8
         call git fetch origin refs/tags/${{ inputs.v8_version }}
         call git checkout FETCH_HEAD
         rem keep hooks on windows (no vpython numpy issue; LASTCHANGE.committime needed by gn)

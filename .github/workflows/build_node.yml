@@ -192,35 +192,28 @@ jobs:
           path: android-ndk-r26b
           key: android-ndk-r26b-${{ runner.os }}-v26b
 
-      # Compilation dominates this job (a windows leg spends ~51 of its 52
-      # minutes in the compiler). ccache keys on content, so re-running with an
-      # unchanged node source - which is the normal case when only a patch
-      # script or a verify script changed - reuses almost every object. The key
-      # deliberately excludes the patch scripts: their edits change a handful of
-      # files, and letting content hashing invalidate just those is the point.
+      # Compilation dominates the unix legs; gyp's make generator only honours
+      # CC/CXX, so build-{linux,macos}.sh wrap their own compilers with ccache
+      # and the job just has to provide (and persist) CCACHE_DIR.
       - name: Install ccache
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
           case "${{ runner.os }}" in
-            Windows)
-              choco install ccache -y --no-progress
-              # choco shims land in a dir that is already on PATH.
-              ccache --version | head -1
-              ;;
             Linux)
               sudo apt-get update
               sudo apt-get install -y --no-install-recommends ccache
-              ccache --version | head -1
               ;;
             macOS)
               brew install ccache
-              ccache --version | head -1
               ;;
           esac
+          ccache --version | head -1
 
       - name: Cache ccache
         uses: actions/cache@v6
+        if: runner.os != 'Windows'
         with:
           # CCACHE_DIR is set explicitly by the build action to this location, so
           # the cache path and the tool agree (ccache's own default differs per

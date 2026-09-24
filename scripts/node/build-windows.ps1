@@ -159,9 +159,12 @@ if ($CcacheDir -ne "") {
     # Big enough that a full node+v8 object set fits; the workflow caches this dir.
     $env:CCACHE_MAXSIZE = "5G"
     $env:CCACHE_COMPRESS = "true"
-    # node's --use-ccache-win takes the DIRECTORY holding ccache.exe.
-    $ccacheArgs = @("ccache", $ccacheExe)
-    Write-Host "ccache enabled: $ccacheExe  (CCACHE_DIR=$env:CCACHE_DIR)"
+    # vcbuild's /p:CLToolPath=<dir> expects the DIRECTORY holding the tools and
+    # then appends clang-cl.exe to it. Passing the executable path made MSBuild
+    # look for "ccache.exe\clang-cl.exe" and abort with MSB6004.
+    $ccacheDir = Split-Path -Parent $ccacheExe
+    $ccacheArgs = @("ccache", $ccacheDir)
+    Write-Host "ccache enabled: $ccacheExe  (CLToolPath=$ccacheDir, CCACHE_DIR=$env:CCACHE_DIR)"
     & $ccacheExe --zero-stats 2>$null | Out-Null
   }
 }

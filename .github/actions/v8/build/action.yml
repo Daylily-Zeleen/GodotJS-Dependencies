@@ -89,15 +89,14 @@ runs:
         if [ "${{ inputs.platform }}" = "macos" ] || [ "${{ inputs.platform }}" = "ios" ]; then
           NINJA_JOBS="-j2"
         fi
+        # set -e aborts on a ninja failure, so this check only runs when the build
+        # succeeded - which is exactly when a silently-uncached build would slip
+        # through. Checking build.ninja is the direct proof (grepping `ccache -s`
+        # output would not work: it prints its statistic labels even when ccache
+        # never ran).
         ninja -C "./out.gn/${{ inputs.target }}" $NINJA_JOBS v8_monolith
-
-        # Fail closed if ccache never reached the compile commands: a silent miss
-        # looks exactly like a working build, just without the cache, and would
-        # waste every subsequent run. Checking build.ninja is the direct proof
-        # (grepping `ccache -s` output would not work - it prints its statistic
-        # labels even when it never ran).
         if command -v ccache >/dev/null 2>&1; then
-          grep -q "ccache" "./out.gn/${{ inputs.target }}/build.ninja" \
+          grep -q ccache "./out.gn/${{ inputs.target }}/build.ninja" \
             || { echo "cc_wrapper did not reach build.ninja; the v8 build ran without ccache" >&2; exit 1; }
           echo "ccache statistics:"; ccache -s || true
         fi
@@ -195,24 +194,12 @@ runs:
         call gn gen .\out.gn\${{ inputs.target }} -args="is_component_build=false is_debug=false target_cpu=""${{ inputs.arch }}"" target_os=""win"" v8_enable_i18n_support=false v8_monolithic=true v8_use_external_startup_data=false v8_enable_pointer_compression=true v8_jitless=false use_custom_libcxx=false treat_warnings_as_errors=false v8_symbol_level=0 v8_enable_sandbox=false v8_enable_concurrent_mksnapshot=false"
         if errorlevel 1 exit /b 1
 
-        rem ccache: gn needs cc_wrapper="ccache" WITH quotes, but cmd strips them
-        rem when a variable is expanded inside the already-quoted -args string
-        rem (gn then reports 'Undefined identifier' for bare ccache). Append to
-        rem the generated args.gn instead - echo preserves the quotes verbatim -
-        rem and re-run gn gen without -args so it re-reads the file.
-        rem The legs spend tens of minutes recompiling identical sources.
-        where ccache >nul 2>&1 && (
-          echo cc_wrapper = "ccache">> .\out.gn\${{ inputs.target }}\args.gn
-          call gn gen .\out.gn\${{ inputs.target }}
-          if errorlevel 1 exit /b 1
-          rem Fail closed if the wrapper did not take effect: a silent miss here
-          rem would look like a working build with no cache at all.
-          findstr /S /C:"ccache" .\out.gn\${{ inputs.target }}\build.ninja >nul || (
-            echo expected ccache in the generated build.ninja after setting cc_wrapper >&2
-            exit /b 1
-          )
-          echo cc_wrapper=ccache is active
-        )
+        rem NOT using ccache here on purpose. gn's cc_wrapper is a no-op under the
+        rem MSVC/ClangCL toolchain this leg uses: setting it produces a build.ninja
+        rem with no ccache in it (verified in CI), and the build then runs at full
+        rem length while looking successful. The unix legs use it, where it works.
+        rem This leg's win comes from the cached v8/ source tree and from ninja's
+        rem own incremental output.
         more .\out.gn\${{ inputs.target }}\args.gn
 
         rem Skip ONLY the ReadOnlyPromotion call on windows: cdb proved an
