@@ -25,6 +25,10 @@ fi
 cd node
 bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
 python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" linux
+# Node only emits -fPIC for shared builds, so the static archive would otherwise
+# contain non-PIC objects and fail to link into the embedder's .so
+# (R_X86_64_TPOFF32 relocation errors).
+python3 "$WORKSPACE/Scripts/scripts/node/patch_pic.py" "$PWD" linux
 export CC=gcc-12
 export CXX=g++-12
 ./configure \

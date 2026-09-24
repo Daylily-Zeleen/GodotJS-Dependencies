@@ -22,6 +22,10 @@ fi
 cd node
 bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
 python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" macos
+# gyp's XcodeSettings appends -gdwarf-2 to every object unless
+# GCC_GENERATE_DEBUGGING_SYMBOLS is NO, which turned the Release archive into a
+# ~10 GB artifact (moluopro's stripped release is ~172 MB).
+python3 "$WORKSPACE/Scripts/scripts/node/patch_debug_info.py" "$PWD" macos
 ./configure \
   --dest-os=mac \
   --dest-cpu="$DEST_CPU" \

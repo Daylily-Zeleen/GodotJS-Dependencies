@@ -44,6 +44,9 @@ fi
 cd node
 bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
 python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" ohos
+# Node only emits -fPIC for shared builds; the static archive must be linkable
+# into a shared object.
+python3 "$WORKSPACE/Scripts/scripts/node/patch_pic.py" "$PWD" ohos
 export CC="$OHOS_NATIVE_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang"
 export CXX="$OHOS_NATIVE_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang++"
 export AR="$OHOS_NATIVE_HOME/llvm/bin/llvm-ar"

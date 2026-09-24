@@ -23,6 +23,8 @@ fi
 cd node
 bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
 python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" ios
+# Same -gdwarf-2 inflation as macOS (shared xcode_settings block).
+python3 "$WORKSPACE/Scripts/scripts/node/patch_debug_info.py" "$PWD" ios
 
 # node.gypi unconditionally adds the openssl-cli test tool as a dependency of
 # libnode (node_use_openssl && !node_shared_openssl). On iOS it cannot link:

@@ -151,10 +151,9 @@ python "$Workspace\Scripts\scripts\node\verify_icu_data.py" "out"
 if ($LASTEXITCODE -ne 0) { throw "ICU data verification failed with exit code $LASTEXITCODE" }
 
 # --- Locate static library (path varies across versions) ---
+# Only a sanity check that the build produced node's own archive; the merged
+# libnode.lib that gets staged is assembled below from the archives node links.
 $Lib = Get-ChildItem -Path "out" -Recurse -Filter "libnode*.lib" | Select-Object -First 1
-if (-not $Lib) {
-  $Lib = Get-ChildItem -Path "out" -Recurse -Filter "*.lib" | Where-Object { $_.FullName -match "Release" } | Select-Object -First 1
-}
 if (-not $Lib) {
   Write-Error "libnode*.lib not found in build output"
   Get-ChildItem -Path "out" -Recurse -Filter "*.lib" | Select-Object -First 20
@@ -177,7 +176,13 @@ if (Test-Path "out/Release/config.gypi") {
   Copy-Item -Force "out/Release/config.gypi" $Hdrs
 }
 New-Item -ItemType Directory -Force -Path $LibDir | Out-Null
-Copy-Item -Force $Lib.FullName (Join-Path $LibDir "libnode.lib")
+# Merge every static library node links into one self-contained libnode.lib.
+# Copying node's own libnode.lib is NOT sufficient: it holds only the node_*
+# objects (192 members / 29k symbols), while the embedder needs the ~220k
+# symbols from v8/icu/openssl/... that node links from separate archives. The
+# 163 unresolved externals in the embedder's link came from exactly that.
+python "$Workspace\Scripts\scripts\node\merge_libnode.py" "out/Release" (Join-Path $LibDir "libnode.lib")
+if ($LASTEXITCODE -ne 0) { throw "libnode merge failed with exit code $LASTEXITCODE" }
 # Publish the same Windows integration templates as moluopro/libnode. They
 # are part of the platform package, not source-only build helpers.
 $TemplateRoot = Join-Path $PSScriptRoot ""

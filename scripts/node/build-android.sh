@@ -39,6 +39,10 @@ fi
 cd node
 bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
 python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" android
+# The POSIX flag block gyp reads covers both toolsets; keep -fPIC explicit so the
+# static archive stays linkable into a shared object regardless of which gyp
+# branch android resolves to.
+python3 "$WORKSPACE/Scripts/scripts/node/patch_pic.py" "$PWD" android
 case "$DEST_CPU" in
   arm64) NDK_ARCH="arm64" ;;
   arm)   NDK_ARCH="arm" ;;

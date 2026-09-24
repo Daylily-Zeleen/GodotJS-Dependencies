@@ -69,6 +69,170 @@ def node_dir(platform: str, arch: str) -> str:
     return f"{platform}/{'x64' if platform == 'windows' else arch}"
 
 
+# A self-contained libnode archive must carry the symbols of every library node
+# links, not just node's own objects. Before this expectation existed the
+# Windows staging step published node's single libnode.lib (192 members /
+# ~29k symbols) and still passed validation, while the embedder's link then
+# failed with 163 unresolved externals. Each marker below is defined in a
+# DIFFERENT archive that node links, so a merged archive must hold all of them.
+# All were verified present in moluopro's known-good linux/macOS releases.
+NODE_COVERAGE_MARKERS = (
+    "node::CreateEnvironment",                          # node's own objects
+    "uv_loop_init",                                     # libuv
+    "nghttp2_submit_request",                           # nghttp2
+    "u_strlen",                                         # ICU
+    "v8::ValueSerializer::Delegate::WriteHostObject",    # v8 api objects
+    "cppgc::internal::Sweeper",                         # cppgc (v8 heap)
+    "EVP_EncryptInit",                                  # OpenSSL
+    "deflate",                                          # zlib
+    "ZSTD_compress",                                    # zstd
+)
+
+# Intactness: a correct merge is a faithful concatenation. A truncated archive
+# reports fewer members than the inputs held (~3630 in known-good releases),
+# and an archive built by name-keyed extraction loses same-named members: gyp
+# archives store only object basenames, so v8's src/heap/sweeper.o and
+# src/heap/cppgc/sweeper.o are both stored as "sweeper.o" and the name lookup
+# returned the first for both. That dropped the cppgc object and surfaced as
+# 131 undefined symbols in the macOS embedder.
+NODE_MIN_MEMBERS = 3000
+
+
+def _raw_members(archive: Path) -> tuple[list[tuple[str, int, int]], bool]:
+    """Parse an archive structurally, returning (name, offset, length), thin."""
+    with archive.open("rb") as fh:
+        magic = fh.read(8)
+        if magic not in (b"!<arch>\n", b"!<thin>\n"):
+            fail(f"{archive} is not an ar archive (magic {magic!r})")
+        thin = magic == b"!<thin>\n"
+        offset = 8
+        strtab = b""
+        members: list[tuple[str, int, int]] = []
+        while True:
+            fh.seek(offset)
+            header = fh.read(60)
+            if len(header) < 60:
+                break
+            if header[58:60] != b"`\n":
+                fail(f"{archive}: malformed archive header at offset {offset}")
+            raw = header[0:16].decode("ascii", "replace").strip()
+            try:
+                size = int(header[48:58].decode("ascii").strip() or "0")
+            except ValueError:
+                fail(f"{archive}: malformed size field at offset {offset}")
+            at = offset + 60
+            if raw == "//":
+                strtab = fh.read(size)
+                name, skip = None, 0
+            elif raw in ("/", "/SYM64/", "/<ECSYMBOLS>/"):
+                name, skip = None, 0
+            elif raw.startswith("#1/"):
+                nlen = int(raw[3:])
+                name = fh.read(min(size, 256))[:nlen].decode("utf-8", "replace").rstrip("\0")
+                skip = nlen
+            elif raw.startswith("/") and raw[1:].isdigit():
+                # GNU ends entries with "/\n", MSVC with NUL and a trailing
+                # "\n" for the whole table: take whichever comes first.
+                start = int(raw[1:])
+                ends = [
+                    end for end in (
+                        strtab.find(b"/\n", start),
+                        strtab.find(b"\n", start),
+                        strtab.find(b"\0", start),
+                    ) if end != -1
+                ]
+                end = min(ends) if ends else len(strtab)
+                name = strtab[start:end].decode("utf-8", "replace").rstrip("\0")
+                skip = 0
+            else:
+                name = raw[:-1] if raw.endswith("/") else raw
+                skip = 0
+            if name is not None:
+                members.append((name, at + skip, size - skip))
+            offset = at + size
+            if offset % 2:
+                offset += 1
+    return members, thin
+
+
+def validate_node_archive_shape(library: Path, platform: str) -> None:
+    """The archive must look like a merged, intact collection."""
+    members, _thin = _raw_members(library)
+    if not members:
+        fail(f"{library} contains no members")
+    if len(members) < NODE_MIN_MEMBERS:
+        fail(
+            f"{library} holds only {len(members)} members; a self-contained "
+            f"libnode needs at least {NODE_MIN_MEMBERS} (node's own object "
+            "archive alone is ~190). The staging step published a single "
+            "un-merged archive."
+        )
+    print(f"node archive shape passed: {library} ({len(members)} members)")
+
+
+def validate_node_coverage(library: Path, platform: str, arch: str) -> None:
+    """Prove the libraries node links are actually inside this archive."""
+    if platform == "windows":
+        # dumpbin only exists in a VS developer prompt on hosted runners, so
+        # scan the raw bytes: a COFF archive stores names verbatim (the existing
+        # RTTI check relies on the same property). Coverage there is asserted by
+        # the member count plus the Delegate markers instead.
+        return
+    nm = shutil.which("nm")
+    if nm is None:
+        fail("nm not found; cannot verify libnode symbol coverage")
+    result = run([nm, "-C", "--defined-only", str(library)])
+    if result.returncode != 0:
+        fail(f"nm failed on {library}: {result.stderr.strip()}")
+    missing = [m for m in NODE_COVERAGE_MARKERS if m not in result.stdout]
+    if missing:
+        fail(
+            f"{library} is missing symbols from libraries node links: "
+            f"{', '.join(missing)}. The archive is not self-contained."
+        )
+    print(f"node coverage validation passed: {library} holds all {len(NODE_COVERAGE_MARKERS)} cross-library markers")
+
+
+def validate_node_linkable(library: Path, platform: str, arch: str) -> None:
+    """Link the whole archive into a shared object.
+
+    This is the regression test for all three packaging defects at once: a
+    non-PIC archive fails with a relocation error, one that wrongly includes
+    host-only build tools fails with multiple definitions (verified: the
+    published linux archive dies on `multiple definition of
+    icu_78::VTimeZone::VTimeZone()` because libicutools was merged in), and a
+    missing member shows up as long as --no-undefined is added. Known-good
+    moluopro archives pass the plain form on both counts, so no extra
+    --no-undefined (which would demand libc++ runtime symbols) is needed.
+    """
+    if platform != "linux":
+        print(f"node link validation skipped: only linux runs the shared-object probe")
+        return
+    cc = os.environ.get("CC", "cc")
+    if shutil.which(cc.split()[0]) is None:
+        fail(f"node link validation needs {cc} but it is not on PATH")
+    fd, probe = tempfile.mkstemp(prefix="node_link_", suffix=".so")
+    os.close(fd)
+    try:
+        cmd = [
+            cc, "-shared", "-fPIC",
+            "-Wl,--whole-archive", str(library), "-Wl,--no-whole-archive",
+            "-pthread", "-ldl", "-lm", "-o", probe,
+        ]
+        result = run(cmd)
+        if result.returncode != 0:
+            detail = result.stderr.strip()
+            kind = "non-PIC objects (rebuild with -fPIC)" if "relocation" in detail else \
+                   "duplicate or missing members (wrong merge set or lost members)"
+            fail(f"{library} failed to link as a shared object - {kind}:\n{detail[-4000:]}")
+    finally:
+        try:
+            os.unlink(probe)
+        except OSError:
+            pass
+    print(f"node link validation passed: {library} links whole-archive into a shared object")
+
+
 def run(cmd: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True)
 
@@ -109,6 +273,9 @@ def validate_node_unix(root: Path, platform: str, arch: str) -> None:
     library = root / node_dir(platform, arch) / "libnode.a"
     if not library.is_file():
         fail(f"libnode.a not found: {library}")
+    validate_node_archive_shape(library, platform)
+    validate_node_coverage(library, platform, arch)
+    validate_node_linkable(library, platform, arch)
     nm = shutil.which("nm")
     if nm is None:
         fail("nm not found; cannot verify libnode RTTI symbols")
@@ -125,6 +292,7 @@ def validate_node_windows(root: Path) -> None:
     library = root / node_dir("windows", "x86_64") / "libnode.lib"
     if not library.is_file():
         fail(f"libnode.lib not found: {library}")
+    validate_node_archive_shape(library, "windows")
     dumpbin = shutil.which("dumpbin")
     if dumpbin is not None:
         result = run([dumpbin, "/symbols", str(library)])
