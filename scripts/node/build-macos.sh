@@ -9,9 +9,18 @@ WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
 
 # Route the compilers through ccache when available; the CI job restores
 # CCACHE_DIR so an unchanged node source reuses almost every object.
+#
+# The compiler must stay the xcrun SHIM (`cc`/`c++`), not `xcrun --find`'s
+# absolute toolchain path. An absolute path bypasses xcrun's SDK resolution, so
+# clang cannot find the system headers: node's configure.py OpenSSL probe - which
+# preprocesses openssl/opensslv.h - then dies with
+#   "asm/include/openssl/crypto.h:27:10: fatal error: 'stdlib.h' file not found"
+# node only WARNS about that, and gyp silently drops deps/ncrypto's engine
+# backend, so the build fails much later on undeclared ENGINE_* symbols. Keeping
+# the shims also matches what gyp recorded before ccache was introduced.
 if command -v ccache >/dev/null 2>&1; then
-  export CC="ccache $(xcrun --find clang 2>/dev/null || echo clang)"
-  export CXX="ccache $(xcrun --find clang++ 2>/dev/null || echo clang++)"
+  export CC="ccache cc"
+  export CXX="ccache c++"
   echo "ccache enabled for the macos node build ($CC)"
 fi
 
