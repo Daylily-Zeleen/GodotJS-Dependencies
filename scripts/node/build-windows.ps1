@@ -186,6 +186,11 @@ if ($CcacheDir -ne "") { & $ccacheExe --show-stats }
 # scripts must be checked explicitly or their failures are silently ignored.
 python "$Workspace\Scripts\scripts\node\verify_icu_config.py" "config.gypi"
 if ($LASTEXITCODE -ne 0) { throw "ICU config verification failed with exit code $LASTEXITCODE" }
+# configure only WARNS when its OpenSSL header probe fails, and gyp then silently
+# drops deps/ncrypto's engine backend; refuse that degraded configuration here
+# rather than publishing a libnode that breaks the embedder much later.
+python "$Workspace\Scripts\scripts\node\verify_openssl_config.py" "config.gypi"
+if ($LASTEXITCODE -ne 0) { throw "OpenSSL config verification failed with exit code $LASTEXITCODE" }
 python "$Workspace\Scripts\scripts\node\verify_icu_data.py" "out"
 if ($LASTEXITCODE -ne 0) { throw "ICU data verification failed with exit code $LASTEXITCODE" }
 
