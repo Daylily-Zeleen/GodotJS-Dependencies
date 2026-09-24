@@ -179,13 +179,12 @@ runs:
         set DEPOT_TOOLS_WIN_TOOLCHAIN=0
         cd %GITHUB_WORKSPACE%\v8\v8
 
-        rem All v8 patches (stack reserve, ReadOnlyPromotion skip, mksnapshot
-        rem launcher reroute) live in scripts/v8/patch_v8_win.ps1. They are
-        rem idempotent because the workflow caches the v8/ tree, so a re-run
-        rem restores an already-patched checkout; the previous inline one-liners
-        rem asserted the *unpatched* text and aborted on every cached run.
-        rem The script is also testable locally against a synthetic tree.
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%GITHUB_WORKSPACE%\Scripts\scripts\v8\patch_v8_win.ps1" -V8Root "%GITHUB_WORKSPACE%\v8\v8" -Target "${{ inputs.target }}"
+        rem All v8 patches live in scripts/v8/patch_v8_win.ps1 and are idempotent,
+        rem because the workflow caches the v8/ tree so a re-run restores an
+        rem already-patched checkout. The previous inline one-liners asserted the
+        rem *unpatched* text and aborted on every cached run.
+        rem Phase 1 (before gn gen): the source patches that generation consumes.
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%GITHUB_WORKSPACE%\Scripts\scripts\v8\patch_v8_win.ps1" -V8Root "%GITHUB_WORKSPACE%\v8\v8"
         if errorlevel 1 exit /b 1
 
         rem windows: v8gen.py is unreliable, use gn gen directly with inline args.
@@ -203,8 +202,11 @@ runs:
         rem own incremental output.
         more .\out.gn\${{ inputs.target }}\args.gn
 
-        rem The ReadOnlyPromotion skip and the mksnapshot launcher reroute are
-        rem applied by patch_v8_win.ps1 above.
+        rem The ReadOnlyPromotion skip is applied by phase 1 above.
+        rem Phase 2 (after gn gen): reroute the mksnapshot launcher inside the
+        rem generated ninja files, which therefore must already exist.
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%GITHUB_WORKSPACE%\Scripts\scripts\v8\patch_v8_win.ps1" -V8Root "%GITHUB_WORKSPACE%\v8\v8" -NinjaReroute -Target "${{ inputs.target }}"
+        if errorlevel 1 exit /b 1
         dir .\out.gn\${{ inputs.target }}
         more .\out.gn\${{ inputs.target }}\args.gn
         call ninja -C .\out.gn\${{ inputs.target }} v8_monolith

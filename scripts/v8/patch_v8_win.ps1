@@ -11,10 +11,16 @@
 # Each patch asserts a state - "already patched" / "patch it" / "layout changed,
 # abort" - rather than asserting the pre-patch text.
 #
-# Usage: patch_v8.ps1 -V8Root <path to v8/v8> [-Target <out dir name, e.g. x64.release>]
+# Usage: patch_v8.ps1 -V8Root <path to v8/v8> [-NinjaReroute [-Target <out dir name>]]
+#
+# Called twice, because the two kinds of patch must straddle `gn gen`:
+#   1. before gn gen: the source patches (BUILD.gn, snapshot.cc) feed generation
+#   2. after  gn gen: the ninja launcher reroute needs the generated out dir
+# The switch keeps each call explicit instead of guessing from the filesystem.
 param(
   [Parameter(Mandatory = $true)][string]$V8Root,
-  [string]$Target = ""
+  [string]$Target = "",
+  [switch]$NinjaReroute
 )
 $ErrorActionPreference = "Stop"
 $script:Failed = $false
@@ -66,30 +72,33 @@ Patch-File `
 # Swaps the exact launcher substring in every generated ninja file so mksnapshot runs
 # through run_mksnapshot_win.py (which widens the PE stack and retries transient
 # NTSTATUS failures). Also idempotent: a cached out dir is already rerouted.
-if ($Target -ne "") {
-  $ninjaDir = Join-Path $V8Root ("out.gn/" + $Target)
-  if (-not (Test-Path $ninjaDir)) {
-    Fail "mksnapshot reroute: generated out dir not found: $ninjaDir"
-  } else {
-    $old = "../../tools/run.py ./mksnapshot "
-    $new = "../../tools/run_mksnapshot_win.py ./mksnapshot "
-    $patched = 0
-    $already = 0
-    Get-ChildItem $ninjaDir -Recurse -Filter "*.ninja" | ForEach-Object {
-      $t = [IO.File]::ReadAllText($_.FullName)
-      if ($t.Contains($old)) {
-        [IO.File]::WriteAllText($_.FullName, $t.Replace($old, $new))
-        $patched++
-      } elseif ($t.Contains($new.Trim())) {
-        $already++
+if ($NinjaReroute) {
+  if ($Target -eq "") { Fail "mksnapshot reroute: -Target is required with -NinjaReroute"; }
+  else {
+    $ninjaDir = Join-Path $V8Root ("out.gn/" + $Target)
+    if (-not (Test-Path $ninjaDir)) {
+      Fail "mksnapshot reroute: generated out dir not found: $ninjaDir"
+    } else {
+      $old = "../../tools/run.py ./mksnapshot "
+      $new = "../../tools/run_mksnapshot_win.py ./mksnapshot "
+      $patched = 0
+      $already = 0
+      Get-ChildItem $ninjaDir -Recurse -Filter "*.ninja" | ForEach-Object {
+        $t = [IO.File]::ReadAllText($_.FullName)
+        if ($t.Contains($old)) {
+          [IO.File]::WriteAllText($_.FullName, $t.Replace($old, $new))
+          $patched++
+        } elseif ($t.Contains($new.Trim())) {
+          $already++
+        }
       }
-    }
-    Write-Host "mksnapshot reroute: patched=$patched already=$already"
-    if ($patched -lt 1 -and $already -lt 1) {
-      Fail "mksnapshot reroute: no ninja file references the mksnapshot launch line"
+      Write-Host "mksnapshot reroute: patched=$patched already=$already"
+      if ($patched -lt 1 -and $already -lt 1) {
+        Fail "mksnapshot reroute: no ninja file references the mksnapshot launch line"
+      }
     }
   }
 }
 
 if ($script:Failed) { exit 1 }
-Write-Host "v8 patches complete"
+Write-Host "v8 patches complete ($(if ($NinjaReroute) { 'ninja reroute' } else { 'source' }) phase)"
