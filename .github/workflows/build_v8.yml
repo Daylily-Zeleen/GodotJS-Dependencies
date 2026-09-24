@@ -194,6 +194,53 @@ jobs:
           restore-keys: |
             depot_tools-
 
+      # A v8 leg spends 31-87 minutes compiling the same sources on every run,
+      # and had no compiler cache at all. ccache keys on content, so a re-run
+      # with an unchanged version/target reuses nearly every object.
+      - name: Install ccache
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ runner.os }}" in
+            Windows)
+              choco install ccache -y --no-progress
+              ;;
+            Linux)
+              sudo apt-get update
+              sudo apt-get install -y --no-install-recommends ccache
+              ;;
+            macOS)
+              brew install ccache
+              ;;
+          esac
+          ccache --version | head -1
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          # Same path on every OS so one cache entry shape works everywhere; the
+          # build action exports CCACHE_DIR to match it (ccache's own default
+          # differs per platform).
+          path: ~/.ccache
+          # The run id ends the key because actions/cache never overwrites an
+          # existing key: a constant key would save once and then never publish
+          # the objects later runs compiled. restore-keys still warm the start.
+          key: ccache-v8-${{ runner.os }}-${{ env.V8_VERSION }}-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-v8-${{ runner.os }}-${{ env.V8_VERSION }}-${{ matrix.target }}-
+            ccache-v8-${{ runner.os }}-${{ env.V8_VERSION }}-
+            ccache-v8-${{ runner.os }}-
+
+      - name: Configure ccache
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ccache"
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=5G" >> "$GITHUB_ENV"
+          echo "CCACHE_COMPRESS=true" >> "$GITHUB_ENV"
+          ccache --zero-stats || true
+
       - name: Fetch v8 (${{ matrix.platform }} ${{ matrix.arch }})
         uses: ./Scripts/.github/actions/v8/fetch
         with:

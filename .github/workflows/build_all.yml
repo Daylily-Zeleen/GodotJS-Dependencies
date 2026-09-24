@@ -30,6 +30,16 @@ on:
         type: string
         required: false
         default: ''
+      keep_ci_releases:
+        description: 'How many ci-* per-platform releases to keep (older ones are deleted)'
+        type: number
+        required: false
+        default: 3
+      keep_full_releases:
+        description: 'How many full bundle releases to keep (older ones are deleted)'
+        type: number
+        required: false
+        default: 5
 
 # Supersede older full builds of the same ref and bundle tag instead of
 # stacking them; different bundle tags can still run concurrently.
@@ -215,3 +225,120 @@ jobs:
             --notes "V8, libwebsockets and node bundles." \
             --repo ${{ github.repository }} \
             --target ${{ github.sha }}
+
+          # --- Per-platform bundles for GodotJS-Ext's fast path ---------------
+          # A separate release tagged ci-<run id> carries one zip per
+          # platform+arch. GodotJS-Ext can then pull exactly the target it is
+          # testing in minutes instead of waiting for the multi-hour full bundle
+          # above, and without a cross-repo token (release assets are
+          # anonymously readable, unlike workflow artifacts).
+          #
+          # The tag embeds the run id on purpose: a fixed tag would let two
+          # concurrent runs clobber each other's assets. The cleanup below keeps
+          # the list short.
+          #
+          # Each asset must be usable on its own, so it carries the component's
+          # shared include/ tree as well as the platform directory:
+          #   staging/v8/include              + staging/v8/<platform>.<arch>.release
+          #   staging/libnode/include         + staging/libnode/<os>/<arch>
+          #   staging/lws/<platform>_<arch>_release  (its include lives inside)
+          # Zipping from the component root preserves those relative paths, so
+          # extracting into third/<component>/ yields the layout SCons expects.
+          ci_tag="ci-${GITHUB_RUN_ID}"
+          rm -rf ci-assets && mkdir -p ci-assets
+          : > ci-assets/ci-assets.txt
+
+          bundle() { # bundle <component-root> <asset-name> <paths...>
+            local root="$1" asset="$2"; shift 2
+            (cd "$root" && zip -qr "$OLDPWD/ci-assets/$asset" "$@")
+            # Record the logical target so the consumer never has to reverse
+            # engineer a filename: <component> <platform> <arch> <dir> <asset>
+            printf '%s\n' "$component $platform $arch $name $asset" >> ci-assets/ci-assets.txt
+          }
+
+          # Staging directory names differ per component (<platform>.<arch>.release,
+          # <platform>_<arch>_release, <platform>/<arch>); normalise them so every
+          # component advertises the same logical platform/arch pair.
+          emit() { # emit <component> <platform> <arch> <dirname>
+            local comp="$1" plat="$2" ar="$3" dir="$4"
+            component="$comp" platform="$plat" arch="$ar" name="$dir"
+            case "$comp" in
+              v8)  bundle staging/v8  "${comp}_${plat}_${ar}.zip"  "$dir" ;;
+              lws) bundle staging/lws "${comp}_${plat}_${ar}.zip"  "$dir" ;;
+              node) bundle staging/libnode "${comp}_${plat}_${ar}.zip" "include" "$dir" ;;
+            esac
+          }
+
+          if [ -d staging/v8 ]; then
+            for dir in staging/v8/*/; do
+              name="$(basename "$dir")"
+              [ "$name" = include ] && continue
+              norm="$(printf '%s' "$name" | sed -E 's/[._]release$//' | tr '.' '_')"
+              emit v8 "${norm%%_*}" "${norm#*_}" "$name"
+            done
+            # The include tree is staged by EVERY v8 leg and is identical, so
+            # bundling it into each asset would duplicate it 22 times.
+            if [ -d staging/v8/include ]; then
+              component=v8 platform=any arch=any name=include
+              bundle staging/v8 v8_include.zip include
+            fi
+          fi
+
+          if [ -d staging/lws ]; then
+            for dir in staging/lws/*/; do
+              name="$(basename "$dir")"
+              [ "$name" = include ] && continue
+              norm="$(printf '%s' "$name" | sed -E 's/[._]release$//' | tr '.' '_')"
+              emit lws "${norm%%_*}" "${norm#*_}" "$name"
+            done
+          fi
+
+          if [ -d staging/libnode ]; then
+            for platdir in staging/libnode/*/; do
+              plat="$(basename "$platdir")"
+              [ "$plat" = include ] && continue
+              for archdir in "$platdir"*/; do
+                [ -d "$archdir" ] || continue
+                emit node "$plat" "$(basename "$archdir")" "$plat/$(basename "$archdir")"
+              done
+            done
+          fi
+
+          count=$(find ci-assets -name '*.zip' | wc -l)
+          echo "per-platform bundles: $count"
+          cat ci-assets/ci-assets.txt
+          [ "$count" -gt 0 ] || { echo "no per-platform bundles were produced" >&2; exit 1; }
+
+          gh release create "$ci_tag" ci-assets/*.zip ci-assets/ci-assets.txt \
+            --title "$ci_tag" \
+            --notes "Per-platform prebuilt bundles from run ${GITHUB_RUN_ID} (commit ${GITHUB_SHA}). Consumed by GodotJS-Ext's CI fast path (see ci-assets.txt for the target -> asset mapping); older ci-* releases are pruned automatically." \
+            --repo ${{ github.repository }} \
+            --target ${{ github.sha }}
+
+          # --- Retention ------------------------------------------------------
+          # Without this every run would leave releases behind (the full bundle
+          # per bundle_tag, plus one ci-* per run) and the list grows forever.
+          # Newest-first, keeping the current run's tags unconditionally.
+          list_tags() { # list_tags <jq-filter>
+            gh release list --repo "${{ github.repository }}" --limit 100 \
+              --json tagName,createdAt -q "$1" \
+              | sort -r | awk 'NF{print $2}'
+          }
+
+          ci_tags=$(list_tags '.[] | select(.tagName | startswith("ci-")) | .createdAt + " " + .tagName')
+          echo "ci releases (newest first): $(echo "$ci_tags" | tr '\n' ' ')"
+          echo "$ci_tags" | tail -n +$(( ${{ inputs.keep_ci_releases }} + 1 )) | while read -r tag; do
+            [ -n "$tag" ] || continue
+            [ "$tag" = "$ci_tag" ] && continue
+            echo "deleting superseded $tag"
+            gh release delete "$tag" --repo "${{ github.repository }}" --yes --cleanup-tag || true
+          done
+
+          full_tags=$(list_tags '.[] | select((.tagName | startswith("ci-")) | not) | .createdAt + " " + .tagName')
+          echo "full releases (newest first): $(echo "$full_tags" | tr '\n' ' ')"
+          echo "$full_tags" | tail -n +$(( ${{ inputs.keep_full_releases }} + 1 )) | while read -r tag; do
+            [ -n "$tag" ] || continue
+            [ "$tag" = "${{ inputs.bundle_tag }}" ] && continue
+            echo "deleting superseded $tag"
+            gh release delete "$tag" --repo "${{ github.repository }}" --yes --cleanup-tag || true
+          done

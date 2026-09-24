@@ -58,12 +58,24 @@ runs:
         # --- generate + configure + build ---
         python ./tools/dev/v8gen.py ${{ inputs.target }}
         cp "$GITHUB_WORKSPACE/Scripts/config/v8/v8.${{ inputs.platform }}_${{ inputs.arch }}.args.gn" "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/args.gn"
+        ARGS="$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/args.gn"
+        # Route every compile through ccache when it is available. v8 uses gn +
+        # ninja, so the compiler is reached through the build (the node legs'
+        # CC/CXX trick cannot work here); gn's cc_wrapper is the supported knob.
+        # A leg spends tens of minutes compiling the same sources every run, so
+        # this is the single biggest cost in this repo's CI.
+        if command -v ccache >/dev/null 2>&1; then
+          printf '\n' >> "$ARGS"
+          printf 'cc_wrapper = "ccache"\n' >> "$ARGS"
+          echo "ccache enabled for the v8 build"
+        else
+          echo "ccache not installed; v8 builds without it"
+        fi
         # V8 13.x needs C++20 std::make_unique_for_overwrite (libstdc++ >= GCC 11).
         # The chromium debian bullseye sysroot ships GCC 10 libstdc++ which lacks it,
         # so on linux use the host system headers instead of the sysroot.
         # NB: args.gn may lack a trailing newline, so ensure one before appending
         if [ "${{ inputs.platform }}" = "linux" ]; then
-          ARGS="$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/args.gn"
           printf '\n' >> "$ARGS"
           printf 'use_sysroot = false\n' >> "$ARGS"
         fi
@@ -168,7 +180,11 @@ runs:
         rem Concurrent builtin generation runs on worker threads whose explicit
         rem small stacks overflow regardless of the main-thread reserve, so pin
         rem snapshot generation to the (enlarged) main thread on windows.
-        call gn gen .\out.gn\${{ inputs.target }} -args="is_component_build=false is_debug=false target_cpu=""${{ inputs.arch }}"" target_os=""win"" v8_enable_i18n_support=false v8_monolithic=true v8_use_external_startup_data=false v8_enable_pointer_compression=true v8_jitless=false use_custom_libcxx=false treat_warnings_as_errors=false v8_symbol_level=0 v8_enable_sandbox=false v8_enable_concurrent_mksnapshot=false"
+        rem cc_wrapper routes every compile through ccache when present (the legs
+        rem spend tens of minutes recompiling identical sources otherwise).
+        set CC_WRAPPER=
+        where ccache >nul 2>&1 && set CC_WRAPPER=cc_wrapper="ccache"
+        call gn gen .\out.gn\${{ inputs.target }} -args="is_component_build=false is_debug=false target_cpu=""${{ inputs.arch }}"" target_os=""win"" v8_enable_i18n_support=false v8_monolithic=true v8_use_external_startup_data=false v8_enable_pointer_compression=true v8_jitless=false use_custom_libcxx=false treat_warnings_as_errors=false v8_symbol_level=0 v8_enable_sandbox=false v8_enable_concurrent_mksnapshot=false %CC_WRAPPER%"
 
         rem Skip ONLY the ReadOnlyPromotion call on windows: cdb proved an
         rem infinite Promote->IterateBody->VisitObject recursion cycle over a
