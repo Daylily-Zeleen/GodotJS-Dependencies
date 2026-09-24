@@ -91,6 +91,10 @@ PY
   --without-inspector \
   --without-report
 python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_config.py" config.gypi
+# node only WARNS when its OpenSSL header probe fails, then gyp silently drops
+# deps/ncrypto's engine backend and the build breaks much later on undeclared
+# ENGINE_* symbols. Treat that degraded configuration as fatal here instead.
+python3 "$WORKSPACE/Scripts/scripts/node/verify_openssl_config.py" config.gypi
 make -j"$(nproc)"
 python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_data.py" out
 

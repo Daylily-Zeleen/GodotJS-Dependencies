@@ -233,6 +233,10 @@ path.write_text(s.replace(old, new, 1), encoding='utf-8')
 PY
 ./android-configure "$NDK_ROOT" "$ANDROID_API" "$NDK_ARCH"
 python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_config.py" config.gypi
+# node only WARNS when its OpenSSL header probe fails, then gyp silently drops
+# deps/ncrypto's engine backend and the build breaks much later on undeclared
+# ENGINE_* symbols. Treat that degraded configuration as fatal here instead.
+python3 "$WORKSPACE/Scripts/scripts/node/verify_openssl_config.py" config.gypi
 # Build ONLY the 'node' target (which depends on libnode.a). The top-level
 # 'make' builds ALL gyp targets including the android-only openssl-cli tool
 # which fails to link (undefined android_getCpuFeatures from NDK cpufeatures,

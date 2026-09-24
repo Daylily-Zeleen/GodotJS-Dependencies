@@ -74,14 +74,23 @@ def _resolve_name(raw: str, head: bytes, strtab: bytes) -> tuple[str | None, int
         # BSD style: the real name lives at the front of the payload.
         nlen = int(raw[3:])
         return head[:nlen].decode("utf-8", "replace").rstrip("\0"), nlen
-    if raw.startswith("/") and raw[1:].isdigit():
-        # GNU style: offset into the '//' table. The entry terminator differs by
-        # producer - GNU writes "name/\n", MSVC writes "name\0" - and MSVC's
-        # table as a whole also ends in a newline. Taking whichever terminator
-        # comes FIRST handles both: preferring "\n" would return the rest of the
-        # table glued together for MSVC (which is what silently produced member
-        # names containing NULs and every following path).
-        start = int(raw[1:])
+    # GNU style: an offset into the '//' table. The 16-byte name field is padded
+    # with spaces, and some binutils versions additionally close it with '/', so
+    # "/0", "/0       " and "/0             /" all denote offset 0. Requiring a
+    # bare "/N" made the padded forms fall through to the short-name path below,
+    # which surfaced the raw field ("/0             ") as a bogus absolute path -
+    # precisely the member name CI reported as missing.
+    ref = raw[1:].strip().rstrip("/").strip() if raw.startswith("/") else ""
+    if ref.isdigit():
+        if not strtab:
+            fail(f"long-name reference {raw!r} precedes the archive's string table")
+        # The entry terminator differs by producer - GNU writes "name/\n", MSVC
+        # writes "name\0" - and MSVC's table as a whole also ends in a newline.
+        # Taking whichever terminator comes FIRST handles both: preferring "\n"
+        # would return the rest of the table glued together for MSVC (which is
+        # what silently produced member names containing NULs and every
+        # following path).
+        start = int(ref)
         candidates = [
             end for end in (
                 strtab.find(b"/\n", start),
@@ -123,20 +132,37 @@ def scan(path: Path) -> tuple[list[Entry], bool]:
                 fail(f"{path}: malformed size field at offset {offset}: {header[48:58]!r}")
 
             payload_at = offset + HEADER_SIZE
-            if raw_name == "//":
+            if thin:
+                # A thin archive stores no bytes for a regular member: the size
+                # field carries the length of the file the member REFERENCES.
+                # Advancing by `size` therefore walks into the middle of the
+                # archive and silently drops every later member (observed on
+                # linux as "thin member ... is missing"). Only the special
+                # members - the symbol index and the long-name table - actually
+                # carry a payload.
+                if raw_name in ("//", "/", "/SYM64/", "/<ECSYMBOLS>/"):
+                    if raw_name == "//":
+                        strtab = fh.read(size)
+                    name, skip, stored = None, 0, size
+                else:
+                    # Nothing to read past the header, so resolve against the
+                    # string table alone.
+                    name, skip = _resolve_name(raw_name, b"", strtab)
+                    stored = 0
+            elif raw_name == "//":
                 strtab = fh.read(size)
-                name = None
-                skip = 0
+                name, skip, stored = None, 0, size
             else:
                 # The name may be embedded in the payload (BSD '#1/'), so read
                 # at most a bounded prefix to resolve it.
                 head = fh.read(min(size, 256))
                 name, skip = _resolve_name(raw_name, head, strtab)
+                stored = size
 
             if name is not None:
                 entries.append(Entry(name, payload_at + skip, size - skip))
 
-            offset = payload_at + size
+            offset = payload_at + stored
             if offset % 2:
                 offset += 1
 

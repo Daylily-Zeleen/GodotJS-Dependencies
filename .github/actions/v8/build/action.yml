@@ -82,6 +82,30 @@ runs:
         fi
         cat "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/args.gn"
         ls -l "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/"
+        # Prove the wrapper reached the compiler rules BEFORE compiling. args.gn
+        # only takes effect once gn regenerates the ninja files, so regenerate
+        # explicitly (a few seconds) rather than trusting whatever the cached
+        # out.gn/ still holds. gn writes the `rule cc`/`rule cxx` command lines -
+        # where cc_wrapper is applied - into toolchain.ninja, NOT build.ninja
+        # (that one only holds the target graph); a previous check grepped
+        # build.ninja alone and failed every unix leg ~48 minutes in, after the
+        # build had already succeeded. Failing here costs seconds instead.
+        if command -v ccache >/dev/null 2>&1; then
+          gn gen "./out.gn/${{ inputs.target }}"
+          # POSIX-portable (no GNU-only --include): macOS ships BSD grep.
+          CCACHE_NINJA="$(find "./out.gn/${{ inputs.target }}" -name '*.ninja' \
+            -exec grep -l ccache {} + 2>/dev/null || true)"
+          if [ -z "$CCACHE_NINJA" ]; then
+            echo "cc_wrapper did not reach any ninja rule; the v8 build would run uncached" >&2
+            echo "--- args.gn ---" >&2
+            cat "$ARGS" >&2
+            echo "--- generated ninja files ---" >&2
+            find "./out.gn/${{ inputs.target }}" -maxdepth 1 -name '*.ninja' -exec ls -l {} + >&2
+            exit 1
+          fi
+          echo "ccache reached the ninja rules in:"
+          echo "$CCACHE_NINJA"
+        fi
         # macos/ios run on macos-latest (M1, 7GB RAM - same constraint the node
         # build scripts were hardened against). V8 monolith compiles are memory
         # hungry; cap ninja jobs there to avoid OOM-killing the whole build.
@@ -89,15 +113,8 @@ runs:
         if [ "${{ inputs.platform }}" = "macos" ] || [ "${{ inputs.platform }}" = "ios" ]; then
           NINJA_JOBS="-j2"
         fi
-        # set -e aborts on a ninja failure, so this check only runs when the build
-        # succeeded - which is exactly when a silently-uncached build would slip
-        # through. Checking build.ninja is the direct proof (grepping `ccache -s`
-        # output would not work: it prints its statistic labels even when ccache
-        # never ran).
         ninja -C "./out.gn/${{ inputs.target }}" $NINJA_JOBS v8_monolith
         if command -v ccache >/dev/null 2>&1; then
-          grep -q ccache "./out.gn/${{ inputs.target }}/build.ninja" \
-            || { echo "cc_wrapper did not reach build.ninja; the v8 build ran without ccache" >&2; exit 1; }
           echo "ccache statistics:"; ccache -s || true
         fi
 
@@ -194,10 +211,12 @@ runs:
         call gn gen .\out.gn\${{ inputs.target }} -args="is_component_build=false is_debug=false target_cpu=""${{ inputs.arch }}"" target_os=""win"" v8_enable_i18n_support=false v8_monolithic=true v8_use_external_startup_data=false v8_enable_pointer_compression=true v8_jitless=false use_custom_libcxx=false treat_warnings_as_errors=false v8_symbol_level=0 v8_enable_sandbox=false v8_enable_concurrent_mksnapshot=false"
         if errorlevel 1 exit /b 1
 
-        rem NOT using ccache here on purpose. gn's cc_wrapper is a no-op under the
-        rem MSVC/ClangCL toolchain this leg uses: setting it produces a build.ninja
-        rem with no ccache in it (verified in CI), and the build then runs at full
-        rem length while looking successful. The unix legs use it, where it works.
+        rem NOT using ccache here on purpose, but the previously stated reason was
+        rem wrong: that check grepped build.ninja only, which never contains the
+        rem compile rules (gn puts them in toolchain.ninja), so "verified in CI"
+        rem only proved the grep was looking in the wrong file. This leg stays
+        rem uncached because wiring ccache over the MSVC/ClangCL toolchain has not
+        rem been verified locally; that needs its own evidence before enabling.
         rem This leg's win comes from the cached v8/ source tree and from ninja's
         rem own incremental output.
         more .\out.gn\${{ inputs.target }}\args.gn
