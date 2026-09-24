@@ -173,18 +173,12 @@ def validate_node_archive_shape(library: Path, platform: str) -> None:
 def validate_node_coverage(library: Path, platform: str, arch: str) -> None:
     """Prove the libraries node links are actually inside this archive."""
     if platform == "windows":
-        # dumpbin only exists in a VS developer prompt on hosted runners, so
-        # scan the raw bytes: a COFF archive stores names verbatim (the existing
-        # RTTI check relies on the same property). Coverage there is asserted by
-        # the member count plus the Delegate markers instead.
+        # dumpbin only exists in a VS developer prompt on hosted runners, and it
+        # cannot finish on a multi-GB archive; coverage there is asserted by the
+        # member-count check plus the Delegate markers.
         return
-    nm = shutil.which("nm")
-    if nm is None:
-        fail("nm not found; cannot verify libnode symbol coverage")
-    result = run([nm, "-C", "--defined-only", str(library)])
-    if result.returncode != 0:
-        fail(f"nm failed on {library}: {result.stderr.strip()}")
-    missing = [m for m in NODE_COVERAGE_MARKERS if m not in result.stdout]
+    output = node_nm_defined(library)
+    missing = [m for m in NODE_COVERAGE_MARKERS if m not in output]
     if missing:
         fail(
             f"{library} is missing symbols from libraries node links: "
@@ -269,6 +263,22 @@ def validate_lws(root: Path, platform: str, arch: str) -> None:
     print(f"lws PIC validation passed: {archive} links as a shared object")
 
 
+def node_nm_defined(library: Path) -> str:
+    """`nm -C --defined-only` output for `library`, tolerating Apple nm.
+
+    Apple's nm rejects `--defined-only`; the portable equivalent is `-U`.
+    """
+    nm = shutil.which("nm")
+    if nm is None:
+        fail("nm not found; cannot verify libnode symbols")
+    result = run([nm, "-C", "--defined-only", str(library)])
+    if result.returncode != 0:
+        result = run([nm, "-C", "-U", str(library)])
+    if result.returncode != 0:
+        fail(f"nm failed on {library}: {result.stderr.strip()}")
+    return result.stdout
+
+
 def validate_node_unix(root: Path, platform: str, arch: str) -> None:
     library = root / node_dir(platform, arch) / "libnode.a"
     if not library.is_file():
@@ -276,16 +286,36 @@ def validate_node_unix(root: Path, platform: str, arch: str) -> None:
     validate_node_archive_shape(library, platform)
     validate_node_coverage(library, platform, arch)
     validate_node_linkable(library, platform, arch)
-    nm = shutil.which("nm")
-    if nm is None:
-        fail("nm not found; cannot verify libnode RTTI symbols")
-    result = run([nm, "-C", str(library)])
-    if result.returncode != 0:
-        fail(f"nm failed on {library}: {result.stderr.strip()}")
-    missing = [symbol for symbol in NODE_DELEGATE_MARKERS if symbol not in result.stdout]
+    output = node_nm_defined(library)
+    missing = [symbol for symbol in NODE_DELEGATE_MARKERS if symbol not in output]
     if missing:
         fail(f"{library} is missing Delegate RTTI symbol(s): {', '.join(missing)}")
     print(f"node RTTI validation passed: {library} contains the Delegate RTTI symbols")
+
+
+def contains_all_markers(library: Path, markers: tuple[str, ...]) -> list[str]:
+    """Stream the archive and report which markers are absent.
+
+    A COFF archive stores decorated symbol names verbatim, so scanning the raw
+    bytes is equivalent to a symbol dump - and unlike `dumpbin /symbols` it
+    finishes on a multi-GB archive. The scan is streamed because the merged
+    libnode.lib is ~3 GB and must not be read into memory.
+    """
+    encoded = [(m, m.encode("utf-8")) for m in markers]
+    found = {m: False for m in markers}
+    overlap = max(len(b) for _m, b in encoded) - 1
+    tail = b""
+    with library.open("rb") as fh:
+        while True:
+            chunk = fh.read(1 << 22)
+            if not chunk:
+                break
+            window = tail + chunk
+            for marker, needle in encoded:
+                if not found[marker] and needle in window:
+                    found[marker] = True
+            tail = window[-overlap:] if overlap else b""
+    return [m for m, ok in found.items() if not ok]
 
 
 def validate_node_windows(root: Path) -> None:
@@ -293,18 +323,7 @@ def validate_node_windows(root: Path) -> None:
     if not library.is_file():
         fail(f"libnode.lib not found: {library}")
     validate_node_archive_shape(library, "windows")
-    dumpbin = shutil.which("dumpbin")
-    if dumpbin is not None:
-        result = run([dumpbin, "/symbols", str(library)])
-        if result.returncode != 0:
-            fail(f"dumpbin failed on {library}: {result.stderr.strip()}")
-        haystack = result.stdout
-    else:
-        # Hosted runners only expose dumpbin inside a VS developer prompt.
-        # A COFF archive stores the decorated symbol names verbatim, so a raw
-        # byte scan is equivalent for our marker check.
-        haystack = library.read_bytes().decode("latin-1")
-    missing = [marker for marker in NODE_WINDOWS_MARKERS if marker not in haystack]
+    missing = contains_all_markers(library, NODE_WINDOWS_MARKERS)
     if missing:
         fail(f"{library} is missing Delegate RTTI/vftable symbol(s): {', '.join(missing)}")
     print(f"node RTTI validation passed: {library} contains the Delegate RTTI/vftable symbols")

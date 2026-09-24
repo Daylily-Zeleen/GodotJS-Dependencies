@@ -36,6 +36,7 @@ import argparse
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -152,35 +153,48 @@ def total_members(path: Path) -> int:
 # --------------------------------------------------------------------------
 
 
-def from_makefile(build_out: Path) -> list[Path]:
-    """Read the archive list from gyp's generated makefiles.
+def _archive_paths_from_mk(mk: Path, build_out: Path) -> list[Path]:
+    """Archive paths referenced as $(obj).target/... inside one makefile.
 
-    gyp writes the exact link inputs into LD_INPUTS in <target>.target.mk, with
-    archive paths spelled $(obj).target/... where $(obj) is <build_out>/obj
-    (out/Makefile sets obj := $(builddir)/obj and builddir ends in BUILDTYPE).
-    The .mk files themselves land next to the toplevel Makefile, which node's
-    configure.py points at out/ via gyp's --generator-output, so they are
-    searched upward from the build directory.
-
-    Order is preserved: static archive order decides symbol resolution.
+    $(obj).target is the make variable $(obj) followed by the literal ".target"
+    toolset suffix, i.e. <build_out>/obj.target/...
     """
-    # $(obj).target is the make variable $(obj) followed by the literal
-    # ".target" toolset suffix, i.e. <build_out>/obj.target/...
-    obj = build_out / "obj"
-    for directory in (build_out.parent, build_out, build_out.parent.parent):
-        for name in ("node.target.mk", "libnode.target.mk"):
-            mk = directory / name
-            if not mk.is_file():
-                continue
-            text = mk.read_text(encoding="utf-8", errors="replace")
-            found: list[Path] = []
-            for match in re.finditer(r"\$\(obj\)\.target/([\w./-]+\.a)", text):
-                lib = Path(f"{obj}.target") / match.group(1)
-                if lib not in found:
-                    found.append(lib)
-            if found:
-                return found
-    return []
+    text = mk.read_text(encoding="utf-8", errors="replace")
+    base = Path(f"{build_out / 'obj'}.target")
+    found: list[Path] = []
+    for match in re.finditer(r"\$\(obj\)\.target/([\w./-]+\.a)", text):
+        lib = base / match.group(1)
+        if lib not in found:
+            found.append(lib)
+    return found
+
+
+def _mk_candidates(build_out: Path) -> list[Path]:
+    """Every makefile gyp might have emitted, nearest-first.
+
+    The layout differs by generator output: node's configure passes
+    --generator-output <node>/out, and `make -C out` runs the root Makefile, so
+    node.target.mk normally sits in build_out.parent. Older/other layouts place
+    it beside or above the build dir, so search outward, bounded - an unbounded
+    walk would be slow on a build tree and could pick up unrelated paths.
+    """
+    roots = [build_out.parent, build_out, build_out.parent.parent]
+    names = ("node.target.mk", "libnode.target.mk", "node_base.target.mk")
+    candidates: list[Path] = []
+    for root in roots:
+        for name in names:
+            candidate = root / name
+            if candidate.is_file():
+                candidates.append(candidate)
+        # Deeper layouts (e.g. out/<toolset>/Release/) hold the mk files too.
+        if root.is_dir():
+            for depth in range(1, 3):
+                pattern = "/".join(["*"] * depth) + "/{node,libnode,node_base}.target.mk"
+                try:
+                    candidates.extend(sorted(root.glob(pattern)))
+                except OSError:
+                    pass
+    return candidates
 
 
 def from_vcxproj(build_out: Path) -> list[Path]:
@@ -215,20 +229,169 @@ def from_vcxproj(build_out: Path) -> list[Path]:
     return found
 
 
+def _symbols(archive: Path) -> tuple[set[str], set[str]]:
+    """(defined, undefined) global symbol names in `archive`.
+
+    COFF is parsed directly (fast, no toolchain needed). ELF/Mach-O goes through
+    `nm`, which is present wherever these archives are built - and this path only
+    runs when the link set looks incomplete, so it costs nothing normally.
+    """
+    defined: set[str] = set()
+    undefined: set[str] = set()
+
+    if archive.suffix != ".lib":
+        nm = shutil.which("nm")
+        if nm is None:
+            return defined, undefined
+        result = subprocess.run([nm, "-g", str(archive)], capture_output=True, text=True, errors="replace")
+        if result.returncode != 0:
+            return defined, undefined
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            kind, name = parts[-2], parts[-1]
+            if kind == "U":
+                undefined.add(name)
+            elif kind.isupper() or kind in ("W", "V"):
+                defined.add(name)
+        return defined, undefined
+
+    entries, _thin = scan(archive)
+    for entry in entries:
+        with archive.open("rb") as fh:
+            fh.seek(entry.payload_at)
+            data = fh.read(entry.payload_len)
+        if len(data) < 20 or struct.unpack_from("<H", data, 0)[0] not in (0x8664, 0xAA64, 0x14C):
+            continue
+        ptr, nsyms = struct.unpack_from("<II", data, 8)
+        if not ptr or not nsyms:
+            continue
+        strtab_at = ptr + nsyms * 18
+        strtab = b""
+        if strtab_at + 4 <= len(data):
+            size = struct.unpack_from("<I", data, strtab_at)[0]
+            strtab = data[strtab_at + 4: strtab_at + 4 + size]
+        i = 0
+        while i < nsyms:
+            off = ptr + i * 18
+            if off + 18 > len(data):
+                break
+            raw = data[off:off + 8]
+            section = struct.unpack_from("<h", data, off + 12)[0]
+            storage = data[off + 16]
+            i += 1 + data[off + 17]
+            if storage not in (2, 105):
+                continue
+            if raw[:4] == b"\0\0\0\0":
+                idx = struct.unpack_from("<I", raw, 4)[0] - 4
+                if not 0 <= idx < len(strtab):
+                    continue
+                end = strtab.find(b"\0", idx)
+                name = strtab[idx:end if end != -1 else len(strtab)].decode("utf-8", "replace")
+            else:
+                name = raw.split(b"\0", 1)[0].decode("utf-8", "replace")
+            if not name:
+                continue
+            (defined if section > 0 else undefined).add(name)
+    return defined, undefined
+
+
+# node's own output archives: either the project archive (libnode.lib/a) or a
+# previously merged artifact. Never merge these back into themselves.
+_OWN_OUTPUT = ("libnode.a", "libnode.lib", "libnode_self.lib", "libnode_merged.lib", "libnode_novcvars.lib")
+
+
+def _candidate_archives(build_out: Path) -> list[Path]:
+    """Every archive the build produced, excluding node's own output archives."""
+    roots = [build_out / "lib", Path(f"{build_out / 'obj'}.target"), build_out / "obj.target", build_out]
+    found: list[Path] = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for lib in sorted(root.rglob("*")):
+            if lib.suffix not in (".a", ".lib") or not lib.is_file():
+                continue
+            if lib.name in _OWN_OUTPUT:
+                continue
+            if lib not in found:
+                found.append(lib)
+    return found
+
+
 def merge_set(build_out: Path) -> list[Path]:
-    libs = from_makefile(build_out) or from_vcxproj(build_out)
+    """Archives node itself links, from makefile metadata or the MSBuild tree."""
+    libs: list[Path] = []
+    for mk in _mk_candidates(build_out):
+        found = [lib for lib in _archive_paths_from_mk(mk, build_out) if lib.is_file()]
+        if found:
+            print(f"link set source: {mk} ({len(found)} archives)")
+            libs = found
+            break
     if not libs:
-        fail(
-            f"could not derive the archive link set from {build_out}: no "
-            "node.target.mk LD_INPUTS and no node.vcxproj StaticLibrary "
-            "references. Refusing to fall back to a directory scan - merging "
-            "every archive found pulls in host-only build tools and a second "
-            "isolate setup implementation."
-        )
-    missing = [str(lib) for lib in libs if not lib.is_file()]
-    if missing:
-        fail(f"link set references archives that do not exist: {missing}")
-    return libs
+        libs = from_vcxproj(build_out)
+        if libs:
+            print(f"link set source: node.vcxproj ({len(libs)} static library projects)")
+
+    if libs:
+        added = complete_link_set(build_out, libs)
+        if added:
+            print(f"link set completed with {len(added)} archive(s) the metadata omitted:")
+            for lib in added:
+                print(f"  + {lib}")
+        return libs + added
+
+    # Self-diagnosing failure. Losing an hour of CI to "could not derive the
+    # link set" is far worse than a vague error, and the next person needs to
+    # know whether the metadata was absent or merely somewhere unexpected.
+    mks: list[str] = []
+    for root in (build_out.parent, build_out):
+        if root.is_dir():
+            mks.extend(sorted(str(p) for p in root.rglob("*.target.mk"))[:20])
+    archives = [str(p) for p in _candidate_archives(build_out)][:40]
+    fail(
+        "could not derive the archive link set.\n"
+        f"  build_out      : {build_out}\n"
+        f"  exists         : {build_out.is_dir()}\n"
+        f"  mk files found : {mks or 'NONE'}\n"
+        f"  candidates     : {[str(p) for p in _mk_candidates(build_out)] or 'NONE'}\n"
+        f"  archives found : {archives or 'NONE'}\n"
+        f"  vcxproj        : {build_out.parent.parent / 'node.vcxproj'}\n"
+        "Refusing to fall back to a directory scan: merging every archive found "
+        "pulls in host-only build tools and a second isolate setup implementation."
+    )
+
+
+def complete_link_set(build_out: Path, linked: list[Path]) -> list[Path]:
+    """Add archives that satisfy symbols the linked set leaves undefined.
+
+    Safety net for incomplete link metadata. The rule is deliberately narrow: an
+    archive is added only if it defines something the library still needs, so
+    test archives (gtest), host build tools (icutools) and the second isolate
+    setup (v8_init) stay out - none of them answer an undefined symbol of the
+    embedded library - while a genuinely omitted archive is pulled back in.
+    """
+    provided: set[str] = set()
+    needed: set[str] = set()
+    for lib in linked:
+        d, u = _symbols(lib)
+        provided |= d
+        needed |= u
+    needed -= provided
+
+    added: list[Path] = []
+    for candidate in _candidate_archives(build_out):
+        if candidate in linked:
+            continue
+        d, u = _symbols(candidate)
+        if not d:
+            continue
+        if d & needed:
+            added.append(candidate)
+            provided |= d
+            needed |= u
+            needed -= provided
+    return added
 
 
 # --------------------------------------------------------------------------

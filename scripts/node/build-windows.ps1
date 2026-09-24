@@ -116,6 +116,12 @@ if ($patchedTrimText -notmatch 'if os\.listdir\(options\.tmpdir\):') { throw "Fa
 python "$Workspace\Scripts\scripts\node\patch_rtti.py" (Get-Location) windows
 python "$Workspace\Scripts\scripts\node\patch_libuv_console.py" (Get-Location)
 if ($LASTEXITCODE -ne 0) { throw "libuv console shutdown patch failed with exit code $LASTEXITCODE" }
+# `vcbuild.bat release` implies ltcg=1 -> --with-ltcg, which turns the objects in
+# libnode.lib into LLVM bitcode. node.exe links fine (lld-link reads bitcode), but
+# an MSVC embedder rejects them: "LNK1107: invalid or corrupt file". The staged
+# archive must be plain COFF.
+python "$Workspace\Scripts\scripts\node\patch_no_ltcg.py" (Get-Location)
+if ($LASTEXITCODE -ne 0) { throw "LTCG patch failed with exit code $LASTEXITCODE" }
 
 # --- Configure & build with MSVC ---
 # Node ships vcbuild.bat which wraps configure + msbuild for the VS toolchain.
