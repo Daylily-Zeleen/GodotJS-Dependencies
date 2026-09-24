@@ -218,13 +218,31 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ inputs.bundle_tag }}" \
-            staging/*.zip \
-            staging/SHA256SUMS.txt \
-            --title "${{ inputs.bundle_tag }}" \
-            --notes "V8, libwebsockets and node bundles." \
-            --repo ${{ github.repository }} \
-            --target ${{ github.sha }}
+          # The versioned release exists to be consumed by name: GodotJS-Ext's
+          # SConstruct points its deps_release_tag at it and downloads
+          # {component}_{version}.zip. A build restricted to some platforms would
+          # publish bundles missing the others, which looks like a normal release
+          # but breaks every consumer on the absent platforms. Publish the
+          # versioned release only for a full build; a scoped run gets the
+          # per-platform ci-* release below, which is what it is for.
+          platforms_input="${{ inputs.platforms }}"
+          full_build=true
+          if [ -n "$platforms_input" ] && [ "$platforms_input" != "all" ]; then
+            full_build=false
+          fi
+
+          if [ "$full_build" = true ]; then
+            echo "full build: publishing the versioned release ${{ inputs.bundle_tag }}"
+            gh release create "${{ inputs.bundle_tag }}" \
+              staging/*.zip \
+              staging/SHA256SUMS.txt \
+              --title "${{ inputs.bundle_tag }}" \
+              --notes "V8, libwebsockets and node bundles." \
+              --repo ${{ github.repository }} \
+              --target ${{ github.sha }}
+          else
+            echo "::warning::platforms='$platforms_input' selects a subset, so the versioned release ${{ inputs.bundle_tag }} is NOT published (it would be missing platforms and silently break consumers). Publishing only the per-platform ci-* release."
+          fi
 
           # --- Per-platform bundles for GodotJS-Ext's fast path ---------------
           # A separate release tagged ci-<run id> carries one zip per
