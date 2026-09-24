@@ -179,13 +179,14 @@ runs:
         set DEPOT_TOOLS_WIN_TOOLCHAIN=0
         cd %GITHUB_WORKSPACE%\v8\v8
 
-        rem Bump the win-x64 linker stack before generating: V8's BUILD.gn sets
-        rem /STACK:2097152 (2MB) for x64 targets and mksnapshot overflows it
-        rem during Turbofan scheduling (0xC00000FD). Reserve 256MB instead.
-        rem Fail-closed: abort when the upstream pattern is missing.
-        powershell -NoProfile -Command "$p='%GITHUB_WORKSPACE%\v8\v8\BUILD.gn'; $t=[IO.File]::ReadAllText($p); if($t.IndexOf('/STACK:2097152') -lt 0){ Write-Error 'expected /STACK:2097152 not found in v8 BUILD.gn'; exit 1 }; [IO.File]::WriteAllText($p, $t.Replace('/STACK:2097152','/STACK:268435456'))"
+        rem All v8 patches (stack reserve, ReadOnlyPromotion skip, mksnapshot
+        rem launcher reroute) live in scripts/v8/patch_v8_win.ps1. They are
+        rem idempotent because the workflow caches the v8/ tree, so a re-run
+        rem restores an already-patched checkout; the previous inline one-liners
+        rem asserted the *unpatched* text and aborted on every cached run.
+        rem The script is also testable locally against a synthetic tree.
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%GITHUB_WORKSPACE%\Scripts\scripts\v8\patch_v8_win.ps1" -V8Root "%GITHUB_WORKSPACE%\v8\v8" -Target "${{ inputs.target }}"
         if errorlevel 1 exit /b 1
-        findstr /C:"/STACK:268435456" "%GITHUB_WORKSPACE%\v8\v8\BUILD.gn" >nul || exit /b 1
 
         rem windows: v8gen.py is unreliable, use gn gen directly with inline args.
         rem Concurrent builtin generation runs on worker threads whose explicit
@@ -202,19 +203,8 @@ runs:
         rem own incremental output.
         more .\out.gn\${{ inputs.target }}\args.gn
 
-        rem Skip ONLY the ReadOnlyPromotion call on windows: cdb proved an
-        rem infinite Promote->IterateBody->VisitObject recursion cycle over a
-        rem self-referential Code graph (5-frame repeating stack to overflow),
-        rem independent of stack size. The RO-space seal that follows must
-        rem still run or serialization asserts.
-        powershell -NoProfile -Command "$p='%GITHUB_WORKSPACE%\v8\v8\src\snapshot\snapshot.cc'; $t=[IO.File]::ReadAllText($p); $old='ReadOnlyPromotion::Promote(isolate_, safepoint_scope, no_gc_from_here_on);'; if($t.IndexOf($old) -lt 0){ Write-Error 'RO-promotion call not found in snapshot.cc'; exit 1 }; [IO.File]::WriteAllText($p, $t.Replace($old,'// win-x64: ReadOnlyPromotion recurses infinitely on self-ref Code graphs; objects serialize from mutable heap.'))"
-        if errorlevel 1 exit /b 1
-        findstr /C:"recurses infinitely" "%GITHUB_WORKSPACE%\v8\v8\src\snapshot\snapshot.cc" >nul || exit /b 1
-        rem Route the mksnapshot action through the PE-stack wrapper: swap the
-        rem exact launcher substring observed in CI logs inside every generated
-        rem ninja file. Fail-closed when nothing matched.
-        powershell -NoProfile -Command "$dir='.\\out.gn\\${{ inputs.target }}'; $total=0; Get-ChildItem $dir -Recurse -Filter '*.ninja' | ForEach-Object { $t=[IO.File]::ReadAllText($_.FullName); if($t.Contains('../../tools/run.py ./mksnapshot ')){ $total++; [IO.File]::WriteAllText($_.FullName,$t.Replace('../../tools/run.py ./mksnapshot ','../../tools/run_mksnapshot_win.py ./mksnapshot ')) } }; Write-Host ('ninja files rerouted through stack wrapper: '+$total); if($total -lt 1){ if('${{ inputs.arch }}' -eq 'x64'){ Write-Error 'no ninja file references the mksnapshot run.py launch line'; exit 1 } else { Write-Host ('arch ${{ inputs.arch }} has no overflow; reroute skipped') } }"
-        if errorlevel 1 exit /b 1
+        rem The ReadOnlyPromotion skip and the mksnapshot launcher reroute are
+        rem applied by patch_v8_win.ps1 above.
         dir .\out.gn\${{ inputs.target }}
         more .\out.gn\${{ inputs.target }}\args.gn
         call ninja -C .\out.gn\${{ inputs.target }} v8_monolith

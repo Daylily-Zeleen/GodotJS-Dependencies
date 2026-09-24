@@ -196,15 +196,19 @@ jobs:
 
       # The v8 source tree is the real cost of this workflow: `fetch v8` plus the
       # first gclient sync measured 40 of the windows leg's 42 minutes, before
-      # any compilation. Cache it so a re-run with the same runner OS and version
-      # (the normal case while iterating on these scripts) only has to align the
-      # tag. CCACHE_DIR is deliberately left at ccache's default (~/.ccache),
-      # i.e. outside this path, so the two caches do not nest.
+      # any compilation - and caching it cut that leg to 3.5 minutes.
+      #
+      # Keyed on the version and on config/v8/** (which feeds args.gn), NOT on the
+      # action files: hashing those would mint a fresh 4.3 GB entry every time this
+      # workflow is edited and leave the previous ones to squat the 10 GB quota.
+      # The build-time patches are deliberately re-applied on every run instead,
+      # which is why they must be idempotent (the cache restores an
+      # already-patched tree).
       - name: Cache v8 source
         uses: actions/cache@v6
         with:
           path: v8
-          key: v8src-${{ runner.os }}-${{ env.V8_VERSION }}-${{ hashFiles('Scripts/.github/actions/v8/fetch/action.yml') }}
+          key: v8src-${{ runner.os }}-${{ env.V8_VERSION }}-${{ hashFiles('Scripts/config/v8/**') }}
           restore-keys: |
             v8src-${{ runner.os }}-${{ env.V8_VERSION }}-
             v8src-${{ runner.os }}-
