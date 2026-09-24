@@ -148,12 +148,18 @@ if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
 }
 $ccacheArgs = @()
 if ($CcacheDir -ne "") {
-  $ccacheExe = (Get-Command ccache -ErrorAction SilentlyContinue).Source
-  if (-not $ccacheExe) {
+  # NB: under Set-StrictMode (the workflow sets -Version Latest) touching a
+  # property of $null is a fatal error, and Get-Command returns $null when the
+  # tool is absent - so the null check must come FIRST. Folding .Source into the
+  # Get-Command call crashes with "property 'Source' cannot be found" instead of
+  # reaching the intended warning.
+  $ccacheCmd = Get-Command ccache -ErrorAction SilentlyContinue
+  if ($null -eq $ccacheCmd) {
     # Not fatal: a missing cache only costs time. Failing here would waste a
     # 50-minute build to report an optimisation being unavailable.
     Write-Warning "CcacheDir='$CcacheDir' was requested but ccache is not installed; building without it"
   } else {
+    $ccacheExe = $ccacheCmd.Source
     New-Item -ItemType Directory -Force -Path $CcacheDir | Out-Null
     $env:CCACHE_DIR = (Resolve-Path $CcacheDir).Path
     # Big enough that a full node+v8 object set fits; the workflow caches this dir.
