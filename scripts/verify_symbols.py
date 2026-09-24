@@ -99,60 +99,20 @@ NODE_MIN_MEMBERS = 3000
 
 
 def _raw_members(archive: Path) -> tuple[list[tuple[str, int, int]], bool]:
-    """Parse an archive structurally, returning (name, offset, length), thin."""
-    with archive.open("rb") as fh:
-        magic = fh.read(8)
-        if magic not in (b"!<arch>\n", b"!<thin>\n"):
-            fail(f"{archive} is not an ar archive (magic {magic!r})")
-        thin = magic == b"!<thin>\n"
-        offset = 8
-        strtab = b""
-        members: list[tuple[str, int, int]] = []
-        while True:
-            fh.seek(offset)
-            header = fh.read(60)
-            if len(header) < 60:
-                break
-            if header[58:60] != b"`\n":
-                fail(f"{archive}: malformed archive header at offset {offset}")
-            raw = header[0:16].decode("ascii", "replace").strip()
-            try:
-                size = int(header[48:58].decode("ascii").strip() or "0")
-            except ValueError:
-                fail(f"{archive}: malformed size field at offset {offset}")
-            at = offset + 60
-            if raw == "//":
-                strtab = fh.read(size)
-                name, skip = None, 0
-            elif raw in ("/", "/SYM64/", "/<ECSYMBOLS>/"):
-                name, skip = None, 0
-            elif raw.startswith("#1/"):
-                nlen = int(raw[3:])
-                name = fh.read(min(size, 256))[:nlen].decode("utf-8", "replace").rstrip("\0")
-                skip = nlen
-            elif raw.startswith("/") and raw[1:].isdigit():
-                # GNU ends entries with "/\n", MSVC with NUL and a trailing
-                # "\n" for the whole table: take whichever comes first.
-                start = int(raw[1:])
-                ends = [
-                    end for end in (
-                        strtab.find(b"/\n", start),
-                        strtab.find(b"\n", start),
-                        strtab.find(b"\0", start),
-                    ) if end != -1
-                ]
-                end = min(ends) if ends else len(strtab)
-                name = strtab[start:end].decode("utf-8", "replace").rstrip("\0")
-                skip = 0
-            else:
-                name = raw[:-1] if raw.endswith("/") else raw
-                skip = 0
-            if name is not None:
-                members.append((name, at + skip, size - skip))
-            offset = at + size
-            if offset % 2:
-                offset += 1
-    return members, thin
+    """Parse an archive structurally, returning (name, offset, length), thin.
+
+    Delegates to merge_libnode.scan: this file used to carry its own copy of the
+    ar walker, and that copy carried the same two defects the merger had - it
+    advanced by the header size in GNU *thin* archives (where a regular member
+    stores no payload, so the size field describes the REFERENCED file) and it
+    only accepted a bare "/N" long-name reference. Two implementations of one
+    format is what let the bug survive; there is now one.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "node"))
+    import merge_libnode  # noqa: PLC0415 - keeps the CLI's import graph lazy
+
+    entries, thin = merge_libnode.scan(archive)
+    return [(e.name, e.payload_at, e.payload_len) for e in entries], thin
 
 
 def validate_node_archive_shape(library: Path, platform: str) -> None:
