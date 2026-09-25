@@ -36,13 +36,33 @@ NODE_PLATFORMS = {
     "ohos": {"arm64"},
 }
 
-# The Delegate RTTI typeinfo symbols are emitted by V8 with hidden visibility
-# (BUILDING_V8_SHARED is undefined for the static build, so V8_EXPORT expands to
-# nothing) and are therefore not present even in the official moluopro/libnode
-# release. The symbols that actually prove the Delegate code was linked into the
-# single self-contained libnode.a -- and that a downstream subclass vtable needs
-# to resolve -- are the out-of-line default virtual function implementations,
-# which V8 emits weakly into the api objects. We assert their presence instead.
+# The Delegate RTTI typeinfo symbols are what the embedder's subclass vtable
+# needs: jsb::Serialization::VariantSerializerDelegate derives from
+# v8::ValueSerializer::Delegate, so its own typeinfo refers to the base class's
+# typeinfo and the link fails with
+#   "typeinfo for v8::ValueSerializer::Delegate", referenced from
+#       typeinfo for jsb::Serialization::VariantSerializerDelegate
+# when node was built with RTTI off. Compiling without RTTI still emits the
+# vtable ('_ZTV...') but drops the typeinfo ('_ZTI...') and type string
+# ('_ZTS...'), so asserting the out-of-line virtual functions alone passes an
+# archive that cannot be linked -- which is precisely how the macOS leg shipped
+# broken while this script reported success. Assert the typeinfo itself.
+#
+# Names are the Itanium manglings with the platform's symbol prefix: Mach-O
+# symbols carry one extra leading underscore. "ValueSerializer" is 15 chars and
+# "ValueDeserializer" 17, which is encoded in the mangled length field.
+NODE_DELEGATE_TYPEINFO_MARKERS = {
+    "darwin": (
+        "__ZTIN2v815ValueSerializer8DelegateE",
+        "__ZTIN2v817ValueDeserializer8DelegateE",
+    ),
+    "elf": (
+        "_ZTIN2v815ValueSerializer8DelegateE",
+        "_ZTIN2v817ValueDeserializer8DelegateE",
+    ),
+}
+# The out-of-line default virtual function implementations, which prove the
+# Delegate code itself was linked into the single self-contained libnode.a.
 NODE_DELEGATE_MARKERS = (
     "v8::ValueSerializer::Delegate::WriteHostObject",
     "v8::ValueDeserializer::Delegate::ReadHostObject",
@@ -250,7 +270,161 @@ def validate_node_unix(root: Path, platform: str, arch: str) -> None:
     missing = [symbol for symbol in NODE_DELEGATE_MARKERS if symbol not in output]
     if missing:
         fail(f"{library} is missing Delegate RTTI symbol(s): {', '.join(missing)}")
+    validate_node_delegate_typeinfo(library, platform)
     print(f"node RTTI validation passed: {library} contains the Delegate RTTI symbols")
+
+
+def validate_node_delegate_typeinfo(library: Path, platform: str) -> None:
+    """Assert the Delegate typeinfo symbols are DEFINED, not merely mentioned.
+
+    A byte scan alone would also match a relocation or an undefined reference,
+    so this parses the symbol tables and requires a defined (not 'U') entry of
+    the right type/visibility class.
+    """
+    flavour = "darwin" if platform in ("macos", "ios") else "elf"
+    wanted = NODE_DELEGATE_TYPEINFO_MARKERS[flavour]
+    defined: set[str] = set()
+    for name, data in _iter_member_payloads(library):
+        for sym in _defined_symbol_names(data, flavour):
+            if sym in wanted:
+                defined.add(sym)
+    missing = [s for s in wanted if s not in defined]
+    if missing:
+        fail(
+            f"{library} does not DEFINE the Delegate RTTI typeinfo symbol(s): "
+            f"{', '.join(missing)}. Node was probably built with RTTI disabled; "
+            "check scripts/node/patch_rtti.py ran for this platform."
+        )
+    print(
+        f"node Delegate typeinfo validation passed: {library} defines "
+        f"{len(wanted)} Delegate typeinfo symbol(s)"
+    )
+
+
+def _iter_member_payloads(library: Path):
+    """Yield (member name, payload bytes) for every archive member.
+
+    Reuses the same structural parser the shape check uses, so thin archives,
+    padded long names and BSD __.SYMDEF members are all handled in one place.
+    """
+    members, _thin = _raw_members(library)
+    with library.open("rb") as fh:
+        for name, offset, length in members:
+            fh.seek(offset)
+            yield name, fh.read(length)
+
+
+def _defined_symbol_names(data: bytes, flavour: str) -> set[str]:
+    """Names this object DEFINES with external visibility.
+
+    `nm` is unusable here: it cannot read a Mach-O archive from a Linux runner,
+    and Apple's nm has different switches. Parsing the tables directly also
+    keeps the check independent of the host toolchain.
+    """
+    if data[:4] == b"\x7fELF":
+        return _defined_symbol_names_elf(data)
+    if data[:4] in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe"):
+        return _defined_symbol_names_macho(data)
+    return set()
+
+
+def _defined_symbol_names_macho(data: bytes) -> set[str]:
+    """Names this object defines AND exports, for a Mach-O object file.
+
+    N_EXT (0x01) marks a symbol visible outside the object; N_PEXT (0x10) marks
+    a private-external (effectively hidden) one, which cannot satisfy a
+    downstream reference and so is rejected. N_TYPE 0x0 is N_UNDF.
+    """
+    import struct
+
+    magic = data[:4]
+    is64 = magic == b"\xcf\xfa\xed\xfe"
+    header = "<IiiIIII" + ("I" if is64 else "")
+    fields = struct.unpack_from(header, data, 0)
+    ncmds = fields[4]
+    off = struct.calcsize(header)
+    symtab = None
+    for _ in range(ncmds):
+        if off + 8 > len(data):
+            break
+        cmd, cmdsize = struct.unpack_from("<II", data, off)
+        if cmd == 0x2:  # LC_SYMTAB
+            symoff, nsyms, stroff, _strsize = struct.unpack_from("<IIII", data, off + 8)
+            symtab = (symoff, nsyms, stroff)
+            break
+        if cmdsize == 0:
+            break
+        off += cmdsize
+    if not symtab:
+        return set()
+    symoff, nsyms, stroff = symtab
+    entsize = 16 if is64 else 12
+    out: set[str] = set()
+    for i in range(nsyms):
+        e = symoff + i * entsize
+        if e + entsize > len(data):
+            break
+        n_strx, n_type = struct.unpack_from("<IB", data, e)
+        if (n_type & 0x0E) == 0x00:  # N_UNDF
+            continue
+        if not (n_type & 0x01):  # not N_EXT: invisible outside this object
+            continue
+        if n_type & 0x10:  # N_PEXT: private external (hidden)
+            continue
+        if n_strx == 0:
+            continue
+        base = stroff + n_strx
+        end = data.index(b"\x00", base)
+        out.add(data[base:end].decode("latin1"))
+    return out
+
+
+def _defined_symbol_names_elf(data: bytes) -> set[str]:
+    """Names this object defines with external visibility.
+
+    LOCAL (static) symbols and HIDDEN ones are excluded on purpose: neither can
+    satisfy the embedder's reference, so accepting them would recreate the
+    blind spot this check exists to close. Verified on the known-good linux
+    archive: both Delegate typeinfos are WEAK/OBJECT/default there, so the
+    requirement matches the artefact that actually links.
+    """
+    import struct
+
+    (_, _, _, _, _, _, shoff, _, _, _, _, shentsize, shnum, shstrndx) = struct.unpack_from(
+        "<16sHHIQQQIHHHHHH", data, 0
+    )
+    sections = []
+    for i in range(shnum):
+        off = shoff + i * shentsize
+        name, typ, _flags, _addr, soff, size, link, _info, _align, entsize = struct.unpack_from(
+            "<IIQQQQIIQQ", data, off
+        )
+        sections.append({"name_off": name, "type": typ, "off": soff, "size": size,
+                         "link": link, "entsize": entsize})
+
+    out: set[str] = set()
+    for sec in sections:
+        if sec["type"] not in (2, 11):  # SHT_SYMTAB, SHT_DYNSYM
+            continue
+        if sec["link"] >= len(sections):
+            continue
+        strtab = sections[sec["link"]]
+        entsize = sec["entsize"] or 24
+        for j in range(sec["size"] // entsize):
+            off = sec["off"] + j * entsize
+            st_name, st_info, st_other, st_shndx = struct.unpack_from("<IBBH", data, off)
+            if st_shndx == 0 or st_name == 0:  # undefined reference
+                continue
+            binding = st_info >> 4
+            if binding == 0:  # STB_LOCAL
+                continue
+            if (st_other & 0x3) == 0x2:  # STV_HIDDEN
+                continue
+            base = strtab["off"] + st_name
+            end = data.index(b"\x00", base)
+            out.add(data[base:end].decode("latin1"))
+    _ = shstrndx
+    return out
 
 
 def contains_all_markers(library: Path, markers: tuple[str, ...]) -> list[str]:
