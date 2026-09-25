@@ -64,6 +64,21 @@ class Entry(NamedTuple):
     payload_len: int
 
 
+# BSD/macOS linker members: the ranlib symbol index of the archive that produced
+# them. They are not object files, and handing one to libtool only earns "not a
+# mach-o" before it is dropped - so the merged archive ends up with FEWER members
+# than were extracted (observed on macos: 3630 members from 37 archives became
+# 3594, the missing 36 being SYMDEF). macOS stores the name BSD-style, i.e.
+# embedded in the payload behind "#1/<len>", so this has to be matched against
+# the RESOLVED name rather than the 16-byte header field.
+_LINKER_MEMBERS = frozenset({
+    "__.SYMDEF",
+    "__.SYMDEF SORTED",
+    "__.SYMDEF_64",
+    "__.SYMDEF_64 SORTED",
+})
+
+
 def _resolve_name(raw: str, head: bytes, strtab: bytes) -> tuple[str | None, int]:
     """Resolve an ar member name. Returns (name, bytes_to_skip_in_payload)."""
     if raw == "//":
@@ -73,7 +88,10 @@ def _resolve_name(raw: str, head: bytes, strtab: bytes) -> tuple[str | None, int
     if raw.startswith("#1/"):
         # BSD style: the real name lives at the front of the payload.
         nlen = int(raw[3:])
-        return head[:nlen].decode("utf-8", "replace").rstrip("\0"), nlen
+        name = head[:nlen].decode("utf-8", "replace").rstrip("\0")
+        if name in _LINKER_MEMBERS:
+            return None, 0
+        return name, nlen
     # GNU style: an offset into the '//' table. The 16-byte name field is padded
     # with spaces, and some binutils versions additionally close it with '/', so
     # "/0", "/0       " and "/0             /" all denote offset 0. Requiring a
