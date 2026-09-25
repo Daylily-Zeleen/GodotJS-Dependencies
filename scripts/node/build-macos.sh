@@ -43,6 +43,12 @@ python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" macos
 # GCC_GENERATE_DEBUGGING_SYMBOLS is NO, which turned the Release archive into a
 # ~10 GB artifact (moluopro's stripped release is ~172 MB).
 python3 "$WORKSPACE/Scripts/scripts/node/patch_debug_info.py" "$PWD" macos
+# libnode is linked into a shared library (Godot GDExtension). v8's default
+# thread-local model for a static build ("local-exec" on linux/macos) emits
+# R_X86_64_TPOFF32-type relocations against hidden symbols such as
+# v8::internal::g_current_isolate_, which a shared object cannot use; selecting
+# v8's library mode routes the access through a getter instead.
+python3 "$WORKSPACE/Scripts/scripts/node/patch_tls.py" "$PWD" macos
 ./configure \
   --dest-os=mac \
   --dest-cpu="$DEST_CPU" \
@@ -56,6 +62,10 @@ python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_config.py" config.gypi
 # deps/ncrypto's engine backend and the build breaks much later on undeclared
 # ENGINE_* symbols. Treat that degraded configuration as fatal here instead.
 python3 "$WORKSPACE/Scripts/scripts/node/verify_openssl_config.py" config.gypi
+# Assert the patch above actually took effect in the fetched tree: the probe
+# preprocesses v8's real header, so a dropped define fails here in seconds
+# instead of after the v8 compile and a whole-archive link attempt.
+python3 "$WORKSPACE/Scripts/scripts/node/verify_tls_config.py" "$PWD" macos
 # macos-latest is an M1 runner with only 7GB RAM; V8 host tools
 # (mksnapshot/torque) are memory-hungry and full ncpu parallelism can OOM
 # them. gyp's make is incremental, so on failure kill leftover build procs

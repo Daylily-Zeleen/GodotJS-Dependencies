@@ -47,6 +47,12 @@ python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" ohos
 # Node only emits -fPIC for shared builds; the static archive must be linkable
 # into a shared object.
 python3 "$WORKSPACE/Scripts/scripts/node/patch_pic.py" "$PWD" ohos
+# libnode is linked into a shared library (Godot GDExtension). v8's default
+# thread-local model for a static build ("local-exec" on linux/macos) emits
+# R_X86_64_TPOFF32-type relocations against hidden symbols such as
+# v8::internal::g_current_isolate_, which a shared object cannot use; selecting
+# v8's library mode routes the access through a getter instead.
+python3 "$WORKSPACE/Scripts/scripts/node/patch_tls.py" "$PWD" ohos
 export CC="$OHOS_NATIVE_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang"
 export CXX="$OHOS_NATIVE_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang++"
 export AR="$OHOS_NATIVE_HOME/llvm/bin/llvm-ar"
@@ -95,6 +101,10 @@ python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_config.py" config.gypi
 # deps/ncrypto's engine backend and the build breaks much later on undeclared
 # ENGINE_* symbols. Treat that degraded configuration as fatal here instead.
 python3 "$WORKSPACE/Scripts/scripts/node/verify_openssl_config.py" config.gypi
+# Assert the patch above actually took effect in the fetched tree: the probe
+# preprocesses v8's real header, so a dropped define fails here in seconds
+# instead of after the v8 compile and a whole-archive link attempt.
+python3 "$WORKSPACE/Scripts/scripts/node/verify_tls_config.py" "$PWD" ohos
 make -j"$(nproc)"
 python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_data.py" out
 

@@ -25,6 +25,12 @@ bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
 python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" ios
 # Same -gdwarf-2 inflation as macOS (shared xcode_settings block).
 python3 "$WORKSPACE/Scripts/scripts/node/patch_debug_info.py" "$PWD" ios
+# libnode is linked into a shared library (Godot GDExtension). v8's default
+# thread-local model for a static build ("local-exec" on linux/macos) emits
+# R_X86_64_TPOFF32-type relocations against hidden symbols such as
+# v8::internal::g_current_isolate_, which a shared object cannot use; selecting
+# v8's library mode routes the access through a getter instead.
+python3 "$WORKSPACE/Scripts/scripts/node/patch_tls.py" "$PWD" ios
 
 # node.gypi unconditionally adds the openssl-cli test tool as a dependency of
 # libnode (node_use_openssl && !node_shared_openssl). On iOS it cannot link:
@@ -81,6 +87,10 @@ python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_config.py" config.gypi
 # deps/ncrypto's engine backend and the build breaks much later on undeclared
 # ENGINE_* symbols. Treat that degraded configuration as fatal here instead.
 python3 "$WORKSPACE/Scripts/scripts/node/verify_openssl_config.py" config.gypi
+# Assert the patch above actually took effect in the fetched tree: the probe
+# preprocesses v8's real header, so a dropped define fails here in seconds
+# instead of after the v8 compile and a whole-archive link attempt.
+python3 "$WORKSPACE/Scripts/scripts/node/verify_tls_config.py" "$PWD" ios
 
 # c-ares ships a macOS config (config/darwin/ares_config.h) which defines
 # HAVE_SYS_RANDOM_H - that header exists on macOS but NOT on iOS. Undefine it
