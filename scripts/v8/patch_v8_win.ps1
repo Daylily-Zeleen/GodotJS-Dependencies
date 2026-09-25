@@ -79,33 +79,52 @@ if ($NinjaReroute) {
     if (-not (Test-Path $ninjaDir)) {
       Fail "mksnapshot reroute: generated out dir not found: $ninjaDir"
     } else {
-      # The launch line is matched by SHAPE, not by one hardcoded string: v8's
-      # gn templates have emitted both "tools/run.py <binary>" and a bare
-      # "run.py", and the target dir/wrapper spelling varies by version. A
-      # literal match made this phase fail ("no ninja file references the
-      # mksnapshot launch line") on a v8 revision whose line differed only in
-      # its prefix, which turned an unrelated upstream change into a red build.
-      $new = "../../tools/run_mksnapshot_win.py ./mksnapshot "
-      $pattern = '\.\./\.\./tools/run\.py (\./)?mksnapshot '
+      # v8's run_mksnapshot template sets `script = "tools/run.py"` and passes
+      # the binary as the FIRST ARGUMENT, rebased to the build dir:
+      #
+      #   command = ../../tools/run.py ../../out.gn/arm64.release/mksnapshot --turbo_...
+      #
+      # so the binary's spelling is not fixed ("./mksnapshot" was a guess) and
+      # matching one literal string cannot work. Rewrite the LAUNCHER on any line
+      # that both runs tools/run.py and mentions mksnapshot, leaving every
+      # argument - including the binary path - untouched.
+      $scriptName = "tools/run.py"
+      $wrapperName = "tools/run_mksnapshot_win.py"
       $patched = 0
       $already = 0
+      $diagnostic = @()
       Get-ChildItem $ninjaDir -Recurse -Filter "*.ninja" | ForEach-Object {
-        $t = [IO.File]::ReadAllText($_.FullName)
-        if ($t.Contains($new)) {
+        $text = [IO.File]::ReadAllText($_.FullName)
+        if ($text.Contains($wrapperName)) {
           $already++
           return
         }
-        $replaced = [regex]::Replace($t, $pattern, $new)
-        if ($replaced -ne $t) {
-          [IO.File]::WriteAllText($_.FullName, $replaced)
+        $lines = $text -split "`n"
+        $changed = $false
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+          if ($lines[$i].Contains($scriptName) -and $lines[$i] -match "mksnapshot") {
+            $lines[$i] = $lines[$i].Replace($scriptName, $wrapperName)
+            $changed = $true
+          }
+        }
+        if ($changed) {
+          [IO.File]::WriteAllText($_.FullName, ($lines -join "`n"))
           $patched++
+        }
+        elseif ($text -match "mksnapshot") {
+          # Nothing replaced but this file does launch mksnapshot: remember what
+          # its command lines actually look like, so the next revision can be
+          # supported without another CI round.
+          $diagnostic += @($text -split "`n" | Where-Object { $_ -match "mksnapshot" } | Select-Object -First 3)
         }
       }
       Write-Host "mksnapshot reroute: patched=$patched already=$already"
       if ($patched -lt 1 -and $already -lt 1) {
-        # Fail closed, but say exactly what was searched for so the next revision
-        # can be matched without another CI round.
-        Fail "mksnapshot reroute: no ninja file under $ninjaDir matches /$pattern/ nor contains '$new'"
+        if ($diagnostic.Count -gt 0) {
+          Write-Host "mksnapshot launcher lines found (no '$scriptName' to replace):"
+          $diagnostic | ForEach-Object { Write-Host ("  " + $_.Trim()) }
+        }
+        Fail "mksnapshot reroute: no ninja file under $ninjaDir runs '$scriptName' for mksnapshot"
       }
     }
   }
