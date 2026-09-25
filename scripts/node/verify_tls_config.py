@@ -89,6 +89,10 @@ def read_tls_model(node_root: Path, platform: str, extra_defines: list[str]) -> 
     v8 = node_root / "deps" / "v8"
     source = f'#include "{INCLUDE_AS}"\nV8_TLS_MODEL\nV8_TLS_LIBRARY_MODE\n'
     cmd = shlex.split(cc) + [
+        # v8config.h hard-errors without C++20, so the standard must be stated
+        # explicitly: a compiler whose default is older (gcc-12, which the linux
+        # node leg uses) fails the probe otherwise.
+        "-std=c++20",
         "-E", "-P", "-I", str(v8), "-I", str(v8 / "include"),
         *extra_defines, *platform_defines(platform), "-x", "c++", "-",
     ]
