@@ -180,18 +180,37 @@ def total_members(path: Path) -> int:
 
 
 def _archive_paths_from_mk(mk: Path, build_out: Path) -> list[Path]:
-    """Archive paths referenced as $(obj).target/... inside one makefile.
+    """Archive paths node links, as recorded in one gyp makefile.
 
-    $(obj).target is the make variable $(obj) followed by the literal ".target"
-    toolset suffix, i.e. <build_out>/obj.target/...
+    gyp spells a static library's output differently per flavor, and the make
+    generator writes whichever form into the *referencing* target's LD_INPUTS:
+
+      linux/android/ohos  $(obj).target/libX.a   ($(obj).target = <build_out>/obj.target)
+      macos/ios           $(builddir)/libX.a     ($(builddir) = <build_out> = .../Release)
+
+    Node's own ``node`` target is what carries LD_INPUTS, so its makefile is the
+    one to read. Handling only the $(obj).target form made the whole macos leg
+    die at "could not derive the archive link set" even though node.target.mk was
+    found - the referenced paths were simply spelled the other way.
     """
     text = mk.read_text(encoding="utf-8", errors="replace")
-    base = Path(f"{build_out / 'obj'}.target")
+
+    # Each variable resolves to a directory; the match keeps whichever prefix it
+    # was written with so the relative remainder can be re-joined.
+    roots = {
+        "$(obj).target": Path(f"{build_out / 'obj'}.target"),
+        "$(obj).target/": Path(f"{build_out / 'obj'}.target"),
+        "$(builddir)": build_out,
+        "$(builddir)/": build_out,
+    }
     found: list[Path] = []
-    for match in re.finditer(r"\$\(obj\)\.target/([\w./-]+\.a)", text):
-        lib = base / match.group(1)
-        if lib not in found:
-            found.append(lib)
+    for variable, root in roots.items():
+        for match in re.finditer(
+            re.escape(variable) + r"/?([\w./-]+\.(?:a|lib))", text
+        ):
+            lib = root / match.group(1)
+            if lib not in found:
+                found.append(lib)
     return found
 
 
