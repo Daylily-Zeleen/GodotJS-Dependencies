@@ -79,22 +79,33 @@ if ($NinjaReroute) {
     if (-not (Test-Path $ninjaDir)) {
       Fail "mksnapshot reroute: generated out dir not found: $ninjaDir"
     } else {
-      $old = "../../tools/run.py ./mksnapshot "
+      # The launch line is matched by SHAPE, not by one hardcoded string: v8's
+      # gn templates have emitted both "tools/run.py <binary>" and a bare
+      # "run.py", and the target dir/wrapper spelling varies by version. A
+      # literal match made this phase fail ("no ninja file references the
+      # mksnapshot launch line") on a v8 revision whose line differed only in
+      # its prefix, which turned an unrelated upstream change into a red build.
       $new = "../../tools/run_mksnapshot_win.py ./mksnapshot "
+      $pattern = '\.\./\.\./tools/run\.py (\./)?mksnapshot '
       $patched = 0
       $already = 0
       Get-ChildItem $ninjaDir -Recurse -Filter "*.ninja" | ForEach-Object {
         $t = [IO.File]::ReadAllText($_.FullName)
-        if ($t.Contains($old)) {
-          [IO.File]::WriteAllText($_.FullName, $t.Replace($old, $new))
-          $patched++
-        } elseif ($t.Contains($new.Trim())) {
+        if ($t.Contains($new)) {
           $already++
+          return
+        }
+        $replaced = [regex]::Replace($t, $pattern, $new)
+        if ($replaced -ne $t) {
+          [IO.File]::WriteAllText($_.FullName, $replaced)
+          $patched++
         }
       }
       Write-Host "mksnapshot reroute: patched=$patched already=$already"
       if ($patched -lt 1 -and $already -lt 1) {
-        Fail "mksnapshot reroute: no ninja file references the mksnapshot launch line"
+        # Fail closed, but say exactly what was searched for so the next revision
+        # can be matched without another CI round.
+        Fail "mksnapshot reroute: no ninja file under $ninjaDir matches /$pattern/ nor contains '$new'"
       }
     }
   }
