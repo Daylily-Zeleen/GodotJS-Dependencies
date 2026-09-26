@@ -89,17 +89,44 @@ runs:
           mkdir -p "$GITHUB_WORKSPACE/v8"
           cd "$GITHUB_WORKSPACE/v8"
           git_retry fetch --nohooks --nohistory v8
-
-          # --- target_os for cross builds ---
-          # Written once, when the tree is created; .gclient is part of the
-          # cached tree afterwards, so re-appending would duplicate the entry.
-          if [ "${{ inputs.platform }}" = "android" ]; then
-            echo "target_os = ['android']" >> .gclient
-          elif [ "${{ inputs.platform }}" = "ios" ]; then
-            echo "target_os = ['ios']" >> .gclient
-          fi
         fi
         cd "$GITHUB_WORKSPACE/v8"
+
+        # --- target_os for cross builds ---
+        # `.gclient` is part of the cached tree, and the cache key is
+        # v8src-<runner OS>-... , so an android leg (which runs on Linux) can
+        # restore a tree that a linux leg created. v8's DEPS gates several
+        # dependencies on conditions derived from target_os -- third_party/
+        # catapult carries 'condition': 'checkout_android' -- and `gclient sync`
+        # only checks those out when .gclient declares the target. So the
+        # declaration has to be normalised on EVERY run, not just when the tree
+        # is first fetched: with the old "append when creating the tree" logic an
+        # android leg restoring a linux-made tree never declared android, the
+        # catapult checkout was skipped, and `gn gen` then died before compiling
+        # a single file:
+        #   ERROR at //build/android/BUILD.gn:219:5: Unable to load
+        #     ".../v8/v8/third_party/catapult/tracing/BUILD.gn"
+        # Rewriting keeps it idempotent, so a warm cache and a cold fetch agree.
+        wanted_target_os=""
+        case "${{ inputs.platform }}" in
+          android) wanted_target_os="['android']" ;;
+          ios)     wanted_target_os="['ios']" ;;
+        esac
+        if [ -n "$wanted_target_os" ]; then
+          grep -v "^target_os[[:space:]]*=" .gclient > .gclient.tmp || true
+          echo "target_os = $wanted_target_os" >> .gclient.tmp
+          mv .gclient.tmp .gclient
+          echo "declared target_os = $wanted_target_os in .gclient for ${{ inputs.platform }}"
+        else
+          # A non-cross leg must not inherit a stale declaration either: a
+          # leftover target_os would pull the host build into the wrong
+          # configuration.
+          if grep -q "^target_os[[:space:]]*=" .gclient; then
+            grep -v "^target_os[[:space:]]*=" .gclient > .gclient.tmp || true
+            mv .gclient.tmp .gclient
+            echo "removed a stale target_os declaration from .gclient (${{ inputs.platform }} is not a cross build)"
+          fi
+        fi
         cat .gclient
 
         # --- checkout requested version + sync ---
@@ -107,6 +134,19 @@ runs:
         git_retry git fetch origin refs/tags/${{ inputs.v8_version }}
         git checkout FETCH_HEAD
         gclient sync -D --force --reset --nohooks
+
+        # Fail here, in seconds, rather than in `gn gen` with an error that
+        # names a GN file instead of the missing checkout. The android
+        # configuration pulls this in via DEPS 'condition': 'checkout_android';
+        # it is the exact dependency whose absence broke all three android legs.
+        if [ "${{ inputs.platform }}" = "android" ]; then
+          if [ ! -f "$GITHUB_WORKSPACE/v8/v8/third_party/catapult/tracing/BUILD.gn" ]; then
+            echo "::error::third_party/catapult is missing after gclient sync; the android checkout did not happen (check target_os in v8/.gclient)"
+            ls -la "$GITHUB_WORKSPACE/v8/v8/third_party/" | head -30 || true
+            exit 1
+          fi
+          echo "android dependency check passed: third_party/catapult is present"
+        fi
         # Best-effort runhooks: some generators need it, but never fail the build
         # (vpython on macos arm64 can't fetch numpy==1.21.1+supported.1).
         (gclient runhooks || true) 2>&1 | tail -20
