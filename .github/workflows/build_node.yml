@@ -192,6 +192,42 @@ jobs:
           path: android-ndk-r26b
           key: android-ndk-r26b-${{ runner.os }}-v26b
 
+      # Compilation dominates the unix legs; gyp's make generator only honours
+      # CC/CXX, so build-{linux,macos}.sh wrap their own compilers with ccache
+      # and the job just has to provide (and persist) CCACHE_DIR.
+      - name: Install ccache
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ runner.os }}" in
+            Linux)
+              sudo apt-get update
+              sudo apt-get install -y --no-install-recommends ccache
+              ;;
+            macOS)
+              brew install ccache
+              ;;
+          esac
+          ccache --version | head -1
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        if: runner.os != 'Windows'
+        with:
+          # CCACHE_DIR is set explicitly by the build action to this location, so
+          # the cache path and the tool agree (ccache's own default differs per
+          # platform: ~/.ccache on Linux, ~/Library/Caches/ccache on macOS).
+          path: ~/.ccache
+          # The run_id belongs in the key: actions/cache never overwrites an
+          # existing key, so a key that stays constant across runs would save
+          # once and then never publish the objects later runs compiled. Every
+          # run saves a fresh entry; restore-keys give it the previous warm start.
+          key: ccache-node-${{ runner.os }}-${{ env.NODE_VERSION }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-node-${{ runner.os }}-${{ env.NODE_VERSION }}-
+            ccache-node-${{ runner.os }}-
+
       - name: Fetch node (${{ matrix.platform }} ${{ matrix.arch }})
         uses: ./Scripts/.github/actions/node/fetch
         with:
@@ -204,6 +240,15 @@ jobs:
           node_version: ${{ env.NODE_VERSION }}
           platform: ${{ matrix.platform }}
           arch: ${{ matrix.arch }}
+          # Windows intentionally passes no ccache_dir. node's --use-ccache-win
+          # routes /p:CLToolPath=<dir> to MSBuild, which appends clang-cl.exe to
+          # it, so that directory must contain a clang-cl.exe (ccache masquerades
+          # as the compiler via argv[0]) - the chocolatey package only ships
+          # ccache.exe. Wiring that up needs its own verification and cannot be
+          # checked locally, so this leg builds without a compiler cache; the
+          # unix legs use ccache via CCACHE_DIR, and v8 uses the cached source
+          # tree.
+          ccache_dir: ''
 
       - name: Upload
         uses: ./Scripts/.github/actions/upload

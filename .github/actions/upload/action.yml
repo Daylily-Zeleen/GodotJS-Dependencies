@@ -13,4 +13,7 @@ runs:
       with:
         name: ${{ inputs.artifact_name }}
         path: staging/
-        retention-days: 1
+        # 7 days: the fork's CI is consumed by GodotJS-Ext's fast path, which
+        # downloads these per-platform artifacts directly instead of waiting for
+        # a full release. A 1-day window made that path unreliable.
+        retention-days: 7

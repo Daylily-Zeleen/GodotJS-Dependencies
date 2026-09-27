@@ -3,7 +3,11 @@
 # Usage: build-windows.ps1 [-Branch <node_branch>] [-DestCpu <cpu>]
 param(
   [string]$Branch = "v24.x",
-  [string]$DestCpu = "x64"
+  [string]$DestCpu = "x64",
+  # Optional ccache directory. Compilation dominates this build (~51 of 52
+  # minutes), so a warm cache is the difference between a 1-minute and a
+  # 50-minute iteration. Empty = no ccache.
+  [string]$CcacheDir = ""
 )
 $ErrorActionPreference = "Stop"
 $Workspace = if ($env:GITHUB_WORKSPACE) { $env:GITHUB_WORKSPACE } else { (Get-Location).Path }
@@ -30,36 +34,59 @@ $gypText = $gypText -replace "'--delete-tmp',", " "
 # Node >= 24 forces the ClangCL toolchain (vcbuild.bat), and an ICU genccode
 # built by clang refuses to emit a Windows .obj without an explicit CPU
 # architecture (-c). Wire '-c <(target_arch)' into every Windows genccode
-# action that lacks it (upstream only set it on one of the three actions).
+# action that lacks it.
 # ICU < 77 does not know this option, so gate on the node version.
+#
+# NOTE: v24.x is a moving branch and upstream has been adding '-c' to these
+# actions over time (it used to be 1 of 3, later 2 of 3). Do NOT assert a
+# hard-coded number of insertions; assert the actual invariant instead: after
+# patching, every '<@(icu_asm_opts)', # -o line must be followed by '-c'.
 if ($Branch -notmatch '^v(\d+)') { throw "Cannot parse Node major version from branch '$Branch'" }
 $NodeMajor = [int]$Matches[1]
+$icuArchOptAnchor = "^([ \t]*)'<@\(icu_asm_opts\)', # -o\s*$"
+$icuArchOptLine = "'-c', '<(target_arch)',"
 if ($NodeMajor -ge 24) {
   # NOTE: use String.Split(); the -split operator with a ", -1" argument
   # silently returns the unsplit string in some argument-parsing paths.
   $gypLines = $gypText.Split("`n")
   $patchedLines = New-Object System.Collections.Generic.List[string]
   $inserted = 0
+  $anchors = 0
   for ($idx = 0; $idx -lt $gypLines.Count; $idx++) {
     $line = $gypLines[$idx]
     $patchedLines.Add($line)
-    if ($line -match "^([ \t]*)'<@\(icu_asm_opts\)', # -o\s*$") {
+    if ($line -match $icuArchOptAnchor) {
+      $anchors++
       $indent = $Matches[1]
       $next = if ($idx + 1 -lt $gypLines.Count) { $gypLines[$idx + 1] } else { "" }
       if ($next -notmatch "^[ \t]*'-c',") {
-        $patchedLines.Add("$indent'-c', '<(target_arch)',")
+        $patchedLines.Add("$indent$icuArchOptLine")
         $inserted++
       }
     }
   }
-  if ($inserted -ne 2) { throw "Expected to add genccode -c to exactly two Windows ICU actions, found $inserted" }
+  # Fail closed on the *invariant*, never on a hard-coded insertion count:
+  # upstream (v24.x) has been adding '-c' to these actions over time, so the
+  # only thing that must hold is "there is at least one such action".
+  if ($anchors -eq 0) { throw "No genccode '<@(icu_asm_opts)', # -o action found in icu-generic.gyp; refusing an unverified patch" }
+  Write-Host "ICU genccode -c patch: $anchors Windows action(s), added '-c' to $inserted"
   $gypText = $patchedLines -join "`n"
 }
 [IO.File]::WriteAllText($IcuGyp, $gypText, [Text.UTF8Encoding]::new($false))
 if ((Get-Content -Raw $IcuGyp) -match '--delete-tmp') { throw "Failed to disable ICU temporary-data deletion" }
 if ($NodeMajor -ge 24) {
-  $cpuArchEntries = [regex]::Matches((Get-Content -Raw $IcuGyp), [regex]::Escape("'-c', '<(target_arch)',")).Count
-  if ($cpuArchEntries -lt 3) { throw "genccode -c patch incomplete: found $cpuArchEntries entries, expected at least 3" }
+  # Invariant, not a magic total: every '<@(icu_asm_opts)', # -o line must now
+  # be followed by '-c'. Upstream has changed how many of those actions ship
+  # with '-c' already, so compare the two counts instead of a fixed number.
+  $patchedRaw = Get-Content -Raw $IcuGyp
+  $archOptCount = [regex]::Matches(
+    $patchedRaw,
+    $icuArchOptAnchor,
+    [System.Text.RegularExpressions.RegexOptions]::Multiline).Count
+  $cpuArchEntries = [regex]::Matches($patchedRaw, [regex]::Escape($icuArchOptLine)).Count
+  if ($cpuArchEntries -lt $archOptCount) {
+    throw "genccode -c patch incomplete: $cpuArchEntries '-c' entries for $archOptCount Windows genccode action(s)"
+  }
 }
 $IcuTrim = Join-Path (Get-Location) "tools/icu/icutrim.py"
 if (-not (Test-Path $IcuTrim)) { throw "Missing ICU trim tool: $IcuTrim" }
@@ -91,6 +118,14 @@ $patchedTrimText = Get-Content -Raw $IcuTrim
 if (($patchedTrimText -split [regex]::Escape($oldTrimGuard)).Count -ne 1) { throw "Old ICU tmpdir guard remains after patch" }
 if ($patchedTrimText -notmatch 'if os\.listdir\(options\.tmpdir\):') { throw "Failed to patch empty ICU tmpdir handling" }
 python "$Workspace\Scripts\scripts\node\patch_rtti.py" (Get-Location) windows
+python "$Workspace\Scripts\scripts\node\patch_libuv_console.py" (Get-Location)
+if ($LASTEXITCODE -ne 0) { throw "libuv console shutdown patch failed with exit code $LASTEXITCODE" }
+# `vcbuild.bat release` implies ltcg=1 -> --with-ltcg, which turns the objects in
+# libnode.lib into LLVM bitcode. node.exe links fine (lld-link reads bitcode), but
+# an MSVC embedder rejects them: "LNK1107: invalid or corrupt file". The staged
+# archive must be plain COFF.
+python "$Workspace\Scripts\scripts\node\patch_no_ltcg.py" (Get-Location)
+if ($LASTEXITCODE -ne 0) { throw "LTCG patch failed with exit code $LASTEXITCODE" }
 
 # --- Configure & build with MSVC ---
 # Node ships vcbuild.bat which wraps configure + msbuild for the VS toolchain.
@@ -111,25 +146,58 @@ if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
   # refresh PATH so nasm is visible to vcbuild.bat
   $env:Path = "C:\Program Files\NASM;" + $env:Path
 }
+$ccacheArgs = @()
+if ($CcacheDir -ne "") {
+  # NB: under Set-StrictMode (the workflow sets -Version Latest) touching a
+  # property of $null is a fatal error, and Get-Command returns $null when the
+  # tool is absent - so the null check must come FIRST. Folding .Source into the
+  # Get-Command call crashes with "property 'Source' cannot be found" instead of
+  # reaching the intended warning.
+  $ccacheCmd = Get-Command ccache -ErrorAction SilentlyContinue
+  if ($null -eq $ccacheCmd) {
+    # Not fatal: a missing cache only costs time. Failing here would waste a
+    # 50-minute build to report an optimisation being unavailable.
+    Write-Warning "CcacheDir='$CcacheDir' was requested but ccache is not installed; building without it"
+  } else {
+    $ccacheExe = $ccacheCmd.Source
+    New-Item -ItemType Directory -Force -Path $CcacheDir | Out-Null
+    $env:CCACHE_DIR = (Resolve-Path $CcacheDir).Path
+    # Big enough that a full node+v8 object set fits; the workflow caches this dir.
+    $env:CCACHE_MAXSIZE = "5G"
+    $env:CCACHE_COMPRESS = "true"
+    # vcbuild's /p:CLToolPath=<dir> expects the DIRECTORY holding the tools and
+    # then appends clang-cl.exe to it. Passing the executable path made MSBuild
+    # look for "ccache.exe\clang-cl.exe" and abort with MSB6004.
+    $ccacheDir = Split-Path -Parent $ccacheExe
+    $ccacheArgs = @("ccache", $ccacheDir)
+    Write-Host "ccache enabled: $ccacheExe  (CLToolPath=$ccacheDir, CCACHE_DIR=$env:CCACHE_DIR)"
+    & $ccacheExe --zero-stats 2>$null | Out-Null
+  }
+}
 if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
   Write-Host "NASM still unavailable, building with openssl-no-asm"
-  & ".\vcbuild.bat" $VcCpu release small-icu openssl-no-asm
+  & ".\vcbuild.bat" $VcCpu release small-icu openssl-no-asm @ccacheArgs
 } else {
-  & ".\vcbuild.bat" $VcCpu release small-icu
+  & ".\vcbuild.bat" $VcCpu release small-icu @ccacheArgs
 }
 if ($LASTEXITCODE -ne 0) { throw "vcbuild.bat failed with exit code $LASTEXITCODE" }
+if ($CcacheDir -ne "") { & $ccacheExe --show-stats }
 # PowerShell does not abort on native-command failures, so the verification
 # scripts must be checked explicitly or their failures are silently ignored.
 python "$Workspace\Scripts\scripts\node\verify_icu_config.py" "config.gypi"
 if ($LASTEXITCODE -ne 0) { throw "ICU config verification failed with exit code $LASTEXITCODE" }
+# configure only WARNS when its OpenSSL header probe fails, and gyp then silently
+# drops deps/ncrypto's engine backend; refuse that degraded configuration here
+# rather than publishing a libnode that breaks the embedder much later.
+python "$Workspace\Scripts\scripts\node\verify_openssl_config.py" "config.gypi"
+if ($LASTEXITCODE -ne 0) { throw "OpenSSL config verification failed with exit code $LASTEXITCODE" }
 python "$Workspace\Scripts\scripts\node\verify_icu_data.py" "out"
 if ($LASTEXITCODE -ne 0) { throw "ICU data verification failed with exit code $LASTEXITCODE" }
 
 # --- Locate static library (path varies across versions) ---
+# Only a sanity check that the build produced node's own archive; the merged
+# libnode.lib that gets staged is assembled below from the archives node links.
 $Lib = Get-ChildItem -Path "out" -Recurse -Filter "libnode*.lib" | Select-Object -First 1
-if (-not $Lib) {
-  $Lib = Get-ChildItem -Path "out" -Recurse -Filter "*.lib" | Where-Object { $_.FullName -match "Release" } | Select-Object -First 1
-}
 if (-not $Lib) {
   Write-Error "libnode*.lib not found in build output"
   Get-ChildItem -Path "out" -Recurse -Filter "*.lib" | Select-Object -First 20
@@ -152,7 +220,13 @@ if (Test-Path "out/Release/config.gypi") {
   Copy-Item -Force "out/Release/config.gypi" $Hdrs
 }
 New-Item -ItemType Directory -Force -Path $LibDir | Out-Null
-Copy-Item -Force $Lib.FullName (Join-Path $LibDir "libnode.lib")
+# Merge every static library node links into one self-contained libnode.lib.
+# Copying node's own libnode.lib is NOT sufficient: it holds only the node_*
+# objects (192 members / 29k symbols), while the embedder needs the ~220k
+# symbols from v8/icu/openssl/... that node links from separate archives. The
+# 163 unresolved externals in the embedder's link came from exactly that.
+python "$Workspace\Scripts\scripts\node\merge_libnode.py" "out/Release" (Join-Path $LibDir "libnode.lib")
+if ($LASTEXITCODE -ne 0) { throw "libnode merge failed with exit code $LASTEXITCODE" }
 # Publish the same Windows integration templates as moluopro/libnode. They
 # are part of the platform package, not source-only build helpers.
 $TemplateRoot = Join-Path $PSScriptRoot ""

@@ -7,6 +7,23 @@ NODE_BRANCH="${1:-v24.x}"
 DEST_CPU="${2:-arm64}"
 WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
 
+# Route the compilers through ccache when available; the CI job restores
+# CCACHE_DIR so an unchanged node source reuses almost every object.
+#
+# The compiler must stay the xcrun SHIM (`cc`/`c++`), not `xcrun --find`'s
+# absolute toolchain path. An absolute path bypasses xcrun's SDK resolution, so
+# clang cannot find the system headers: node's configure.py OpenSSL probe - which
+# preprocesses openssl/opensslv.h - then dies with
+#   "asm/include/openssl/crypto.h:27:10: fatal error: 'stdlib.h' file not found"
+# node only WARNS about that, and gyp silently drops deps/ncrypto's engine
+# backend, so the build fails much later on undeclared ENGINE_* symbols. Keeping
+# the shims also matches what gyp recorded before ccache was introduced.
+if command -v ccache >/dev/null 2>&1; then
+  export CC="ccache cc"
+  export CXX="ccache c++"
+  echo "ccache enabled for the macos node build ($CC)"
+fi
+
 # --- Ensure CMake/python available (macOS runners) ---
 if ! command -v python3 >/dev/null 2>&1; then
   brew install python || true
@@ -22,6 +39,16 @@ fi
 cd node
 bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
 python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" macos
+# gyp's XcodeSettings appends -gdwarf-2 to every object unless
+# GCC_GENERATE_DEBUGGING_SYMBOLS is NO, which turned the Release archive into a
+# ~10 GB artifact (moluopro's stripped release is ~172 MB).
+python3 "$WORKSPACE/Scripts/scripts/node/patch_debug_info.py" "$PWD" macos
+# libnode is linked into a shared library (Godot GDExtension). v8's default
+# thread-local model for a static build ("local-exec" on linux/macos) emits
+# R_X86_64_TPOFF32-type relocations against hidden symbols such as
+# v8::internal::g_current_isolate_, which a shared object cannot use; selecting
+# v8's library mode routes the access through a getter instead.
+python3 "$WORKSPACE/Scripts/scripts/node/patch_tls.py" "$PWD" macos
 ./configure \
   --dest-os=mac \
   --dest-cpu="$DEST_CPU" \
@@ -31,6 +58,14 @@ python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" macos
   --without-inspector \
   --without-report
 python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_config.py" config.gypi
+# node only WARNS when its OpenSSL header probe fails, then gyp silently drops
+# deps/ncrypto's engine backend and the build breaks much later on undeclared
+# ENGINE_* symbols. Treat that degraded configuration as fatal here instead.
+python3 "$WORKSPACE/Scripts/scripts/node/verify_openssl_config.py" config.gypi
+# Assert the patch above actually took effect in the fetched tree: the probe
+# preprocesses v8's real header, so a dropped define fails here in seconds
+# instead of after the v8 compile and a whole-archive link attempt.
+python3 "$WORKSPACE/Scripts/scripts/node/verify_tls_config.py" "$PWD" macos
 # macos-latest is an M1 runner with only 7GB RAM; V8 host tools
 # (mksnapshot/torque) are memory-hungry and full ncpu parallelism can OOM
 # them. gyp's make is incremental, so on failure kill leftover build procs

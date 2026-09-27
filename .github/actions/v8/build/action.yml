@@ -58,17 +58,54 @@ runs:
         # --- generate + configure + build ---
         python ./tools/dev/v8gen.py ${{ inputs.target }}
         cp "$GITHUB_WORKSPACE/Scripts/config/v8/v8.${{ inputs.platform }}_${{ inputs.arch }}.args.gn" "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/args.gn"
+        ARGS="$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/args.gn"
+        # Route every compile through ccache when it is available. v8 uses gn +
+        # ninja, so the compiler is reached through the build (the node legs'
+        # CC/CXX trick cannot work here); gn's cc_wrapper is the supported knob.
+        # A leg spends tens of minutes compiling the same sources every run, so
+        # this is the single biggest cost in this repo's CI.
+        if command -v ccache >/dev/null 2>&1; then
+          printf '\n' >> "$ARGS"
+          printf 'cc_wrapper = "ccache"\n' >> "$ARGS"
+          echo "ccache enabled for the v8 build"
+        else
+          echo "ccache not installed; v8 builds without it"
+        fi
+
         # V8 13.x needs C++20 std::make_unique_for_overwrite (libstdc++ >= GCC 11).
         # The chromium debian bullseye sysroot ships GCC 10 libstdc++ which lacks it,
         # so on linux use the host system headers instead of the sysroot.
         # NB: args.gn may lack a trailing newline, so ensure one before appending
         if [ "${{ inputs.platform }}" = "linux" ]; then
-          ARGS="$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/args.gn"
           printf '\n' >> "$ARGS"
           printf 'use_sysroot = false\n' >> "$ARGS"
         fi
         cat "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/args.gn"
         ls -l "$GITHUB_WORKSPACE/v8/v8/out.gn/${{ inputs.target }}/"
+        # Prove the wrapper reached the compiler rules BEFORE compiling. args.gn
+        # only takes effect once gn regenerates the ninja files, so regenerate
+        # explicitly (a few seconds) rather than trusting whatever the cached
+        # out.gn/ still holds. gn writes the `rule cc`/`rule cxx` command lines -
+        # where cc_wrapper is applied - into toolchain.ninja, NOT build.ninja
+        # (that one only holds the target graph); a previous check grepped
+        # build.ninja alone and failed every unix leg ~48 minutes in, after the
+        # build had already succeeded. Failing here costs seconds instead.
+        if command -v ccache >/dev/null 2>&1; then
+          gn gen "./out.gn/${{ inputs.target }}"
+          # POSIX-portable (no GNU-only --include): macOS ships BSD grep.
+          CCACHE_NINJA="$(find "./out.gn/${{ inputs.target }}" -name '*.ninja' \
+            -exec grep -l ccache {} + 2>/dev/null || true)"
+          if [ -z "$CCACHE_NINJA" ]; then
+            echo "cc_wrapper did not reach any ninja rule; the v8 build would run uncached" >&2
+            echo "--- args.gn ---" >&2
+            cat "$ARGS" >&2
+            echo "--- generated ninja files ---" >&2
+            find "./out.gn/${{ inputs.target }}" -maxdepth 1 -name '*.ninja' -exec ls -l {} + >&2
+            exit 1
+          fi
+          echo "ccache reached the ninja rules in:"
+          echo "$CCACHE_NINJA"
+        fi
         # macos/ios run on macos-latest (M1, 7GB RAM - same constraint the node
         # build scripts were hardened against). V8 monolith compiles are memory
         # hungry; cap ninja jobs there to avoid OOM-killing the whole build.
@@ -77,6 +114,9 @@ runs:
           NINJA_JOBS="-j2"
         fi
         ninja -C "./out.gn/${{ inputs.target }}" $NINJA_JOBS v8_monolith
+        if command -v ccache >/dev/null 2>&1; then
+          echo "ccache statistics:"; ccache -s || true
+        fi
 
         # --- stage artifact ---
         # The upstream godotjs v8 bundle ships v8/include/ (v8 public headers +
@@ -156,32 +196,35 @@ runs:
         set DEPOT_TOOLS_WIN_TOOLCHAIN=0
         cd %GITHUB_WORKSPACE%\v8\v8
 
-        rem Bump the win-x64 linker stack before generating: V8's BUILD.gn sets
-        rem /STACK:2097152 (2MB) for x64 targets and mksnapshot overflows it
-        rem during Turbofan scheduling (0xC00000FD). Reserve 256MB instead.
-        rem Fail-closed: abort when the upstream pattern is missing.
-        powershell -NoProfile -Command "$p='%GITHUB_WORKSPACE%\v8\v8\BUILD.gn'; $t=[IO.File]::ReadAllText($p); if($t.IndexOf('/STACK:2097152') -lt 0){ Write-Error 'expected /STACK:2097152 not found in v8 BUILD.gn'; exit 1 }; [IO.File]::WriteAllText($p, $t.Replace('/STACK:2097152','/STACK:268435456'))"
+        rem All v8 patches live in scripts/v8/patch_v8_win.ps1 and are idempotent,
+        rem because the workflow caches the v8/ tree so a re-run restores an
+        rem already-patched checkout. The previous inline one-liners asserted the
+        rem *unpatched* text and aborted on every cached run.
+        rem Phase 1 (before gn gen): the source patches that generation consumes.
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%GITHUB_WORKSPACE%\Scripts\scripts\v8\patch_v8_win.ps1" -V8Root "%GITHUB_WORKSPACE%\v8\v8"
         if errorlevel 1 exit /b 1
-        findstr /C:"/STACK:268435456" "%GITHUB_WORKSPACE%\v8\v8\BUILD.gn" >nul || exit /b 1
 
         rem windows: v8gen.py is unreliable, use gn gen directly with inline args.
         rem Concurrent builtin generation runs on worker threads whose explicit
         rem small stacks overflow regardless of the main-thread reserve, so pin
         rem snapshot generation to the (enlarged) main thread on windows.
         call gn gen .\out.gn\${{ inputs.target }} -args="is_component_build=false is_debug=false target_cpu=""${{ inputs.arch }}"" target_os=""win"" v8_enable_i18n_support=false v8_monolithic=true v8_use_external_startup_data=false v8_enable_pointer_compression=true v8_jitless=false use_custom_libcxx=false treat_warnings_as_errors=false v8_symbol_level=0 v8_enable_sandbox=false v8_enable_concurrent_mksnapshot=false"
-
-        rem Skip ONLY the ReadOnlyPromotion call on windows: cdb proved an
-        rem infinite Promote->IterateBody->VisitObject recursion cycle over a
-        rem self-referential Code graph (5-frame repeating stack to overflow),
-        rem independent of stack size. The RO-space seal that follows must
-        rem still run or serialization asserts.
-        powershell -NoProfile -Command "$p='%GITHUB_WORKSPACE%\v8\v8\src\snapshot\snapshot.cc'; $t=[IO.File]::ReadAllText($p); $old='ReadOnlyPromotion::Promote(isolate_, safepoint_scope, no_gc_from_here_on);'; if($t.IndexOf($old) -lt 0){ Write-Error 'RO-promotion call not found in snapshot.cc'; exit 1 }; [IO.File]::WriteAllText($p, $t.Replace($old,'// win-x64: ReadOnlyPromotion recurses infinitely on self-ref Code graphs; objects serialize from mutable heap.'))"
         if errorlevel 1 exit /b 1
-        findstr /C:"recurses infinitely" "%GITHUB_WORKSPACE%\v8\v8\src\snapshot\snapshot.cc" >nul || exit /b 1
-        rem Route the mksnapshot action through the PE-stack wrapper: swap the
-        rem exact launcher substring observed in CI logs inside every generated
-        rem ninja file. Fail-closed when nothing matched.
-        powershell -NoProfile -Command "$dir='.\\out.gn\\${{ inputs.target }}'; $total=0; Get-ChildItem $dir -Recurse -Filter '*.ninja' | ForEach-Object { $t=[IO.File]::ReadAllText($_.FullName); if($t.Contains('../../tools/run.py ./mksnapshot ')){ $total++; [IO.File]::WriteAllText($_.FullName,$t.Replace('../../tools/run.py ./mksnapshot ','../../tools/run_mksnapshot_win.py ./mksnapshot ')) } }; Write-Host ('ninja files rerouted through stack wrapper: '+$total); if($total -lt 1){ if('${{ inputs.arch }}' -eq 'x64'){ Write-Error 'no ninja file references the mksnapshot run.py launch line'; exit 1 } else { Write-Host ('arch ${{ inputs.arch }} has no overflow; reroute skipped') } }"
+
+        rem NOT using ccache here on purpose, but the previously stated reason was
+        rem wrong: that check grepped build.ninja only, which never contains the
+        rem compile rules (gn puts them in toolchain.ninja), so "verified in CI"
+        rem only proved the grep was looking in the wrong file. This leg stays
+        rem uncached because wiring ccache over the MSVC/ClangCL toolchain has not
+        rem been verified locally; that needs its own evidence before enabling.
+        rem This leg's win comes from the cached v8/ source tree and from ninja's
+        rem own incremental output.
+        more .\out.gn\${{ inputs.target }}\args.gn
+
+        rem The ReadOnlyPromotion skip is applied by phase 1 above.
+        rem Phase 2 (after gn gen): reroute the mksnapshot launcher inside the
+        rem generated ninja files, which therefore must already exist.
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%GITHUB_WORKSPACE%\Scripts\scripts\v8\patch_v8_win.ps1" -V8Root "%GITHUB_WORKSPACE%\v8\v8" -NinjaReroute -Target "${{ inputs.target }}"
         if errorlevel 1 exit /b 1
         dir .\out.gn\${{ inputs.target }}
         more .\out.gn\${{ inputs.target }}\args.gn

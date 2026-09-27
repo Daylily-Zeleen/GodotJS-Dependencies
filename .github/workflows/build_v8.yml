@@ -87,8 +87,14 @@ jobs:
             {"platform": "linux", "arch": "x86_64", "runner": "ubuntu-22.04", "target": "x64.release", "staging": "linux.x86_64.release", "artifact": "prebuilt_v8_linux_x86_64"},
             {"platform": "linux", "arch": "arm64", "runner": "ubuntu-22.04", "target": "arm64.release", "staging": "linux.arm64.release", "artifact": "prebuilt_v8_linux_arm64"},
             # macos
-            {"platform": "macos", "arch": "arm64", "runner": "macos-latest", "target": "arm64.release", "staging": "macos.arm64.release", "artifact": "prebuilt_v8_macos_arm64"},
-            {"platform": "macos", "arch": "x86_64", "runner": "macos-latest", "target": "x64.release", "staging": "macos.x86_64.release", "artifact": "prebuilt_v8_macos_x86_64"},
+            # macos-15 (Xcode 16.4 / MacOSX15 SDK), deliberately NOT macos-latest:
+            # macos-latest moved to the macOS 26 image, whose libc++ headers use
+            # __builtin_clzg/__builtin_ctzg. V8 12.4.x ships its own clang
+            # (llvmorg-19-init) that predates those builtins, so every V8 source
+            # file fails to compile against that SDK. Pinning to the SDK the
+            # 12.4.x prebuilts were produced with keeps both Apple legs green.
+            {"platform": "macos", "arch": "arm64", "runner": "macos-15", "target": "arm64.release", "staging": "macos.arm64.release", "artifact": "prebuilt_v8_macos_arm64"},
+            {"platform": "macos", "arch": "x86_64", "runner": "macos-15", "target": "x64.release", "staging": "macos.x86_64.release", "artifact": "prebuilt_v8_macos_x86_64"},
             # windows (arch = gn arch)
             {"platform": "windows", "arch": "x64", "runner": "windows-2022", "target": "x64.release", "staging": "windows_x86_64_release", "artifact": "prebuilt_v8_windows_x86_64"},
             {"platform": "windows", "arch": "arm64", "runner": "windows-2022", "target": "arm64.release", "staging": "windows_arm64_release", "artifact": "prebuilt_v8_windows_arm64"},
@@ -97,7 +103,8 @@ jobs:
             {"platform": "android", "arch": "arm32", "runner": "ubuntu-22.04", "target": "arm.release", "staging": "android.arm32.release", "artifact": "prebuilt_v8_android_arm32"},
             {"platform": "android", "arch": "x86_64", "runner": "ubuntu-22.04", "target": "x64.release", "staging": "android.x86_64.release", "artifact": "prebuilt_v8_android_x86_64"},
             # ios (x86_64 simulator dropped: Xcode 26 SDK no longer supports it)
-            {"platform": "ios", "arch": "arm64", "runner": "macos-latest", "target": "arm64.release", "staging": "ios.arm64.release", "artifact": "prebuilt_v8_ios_arm64"},
+            # macos-15 for the same libc++/bundled-clang reason as the macOS legs.
+            {"platform": "ios", "arch": "arm64", "runner": "macos-15", "target": "arm64.release", "staging": "ios.arm64.release", "artifact": "prebuilt_v8_ios_arm64"},
           ]
 
           # Parse platforms: entries can be "platform" (all arches) or "platform-arch" (e.g. linux-x86_64)
@@ -180,9 +187,84 @@ jobs:
         uses: actions/cache@v6
         with:
           path: depot_tools
-          key: depot_tools-${{ runner.os }}-${{ github.ref_name }}
+          # Keyed by runner OS only: depot_tools is a fetched tool, and including
+          # the branch name (as before) meant every run on a new branch got a
+          # cold cache and re-fetched it.
+          key: depot_tools-${{ runner.os }}-
           restore-keys: |
-            depot_tools-${{ runner.os }}-
+            depot_tools-
+
+      # The v8 source tree is the real cost of this workflow: `fetch v8` plus the
+      # first gclient sync measured 40 of the windows leg's 42 minutes, before
+      # any compilation - and caching it cut that leg to 3.5 minutes.
+      #
+      # Keyed on the version and on config/v8/** (which feeds args.gn), NOT on the
+      # action files: hashing those would mint a fresh 4.3 GB entry every time this
+      # workflow is edited and leave the previous ones to squat the 10 GB quota.
+      # The build-time patches are deliberately re-applied on every run instead,
+      # which is why they must be idempotent (the cache restores an
+      # already-patched tree).
+      - name: Cache v8 source
+        uses: actions/cache@v6
+        with:
+          path: v8
+          key: v8src-${{ runner.os }}-${{ env.V8_VERSION }}-${{ hashFiles('Scripts/config/v8/**') }}
+          restore-keys: |
+            v8src-${{ runner.os }}-${{ env.V8_VERSION }}-
+            v8src-${{ runner.os }}-
+
+      # A v8 leg spends 31-87 minutes compiling the same sources on every run,
+      # and had no compiler cache at all. ccache keys on content, so a re-run
+      # with an unchanged version/target reuses nearly every object.
+      # NOTE: this only affects the unix legs. gn's cc_wrapper is a no-op under
+      # the MSVC/ClangCL toolchain used on Windows (verified: build.ninja comes
+      # out with no ccache in it), so the windows leg relies on the source cache
+      # and on incremental ninja output instead.
+      - name: Install ccache
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ runner.os }}" in
+            Windows)
+              choco install ccache -y --no-progress
+              ;;
+            Linux)
+              sudo apt-get update
+              sudo apt-get install -y --no-install-recommends ccache
+              ;;
+            macOS)
+              brew install ccache
+              ;;
+          esac
+          ccache --version | head -1
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        if: runner.os != 'Windows'
+        with:
+          # Same path on every OS so one cache entry shape works everywhere; the
+          # build action exports CCACHE_DIR to match it (ccache's own default
+          # differs per platform).
+          path: ~/.ccache
+          # The run id ends the key because actions/cache never overwrites an
+          # existing key: a constant key would save once and then never publish
+          # the objects later runs compiled. restore-keys still warm the start.
+          key: ccache-v8-${{ runner.os }}-${{ env.V8_VERSION }}-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-v8-${{ runner.os }}-${{ env.V8_VERSION }}-${{ matrix.target }}-
+            ccache-v8-${{ runner.os }}-${{ env.V8_VERSION }}-
+            ccache-v8-${{ runner.os }}-
+
+      - name: Configure ccache
+        shell: bash
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ccache"
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=5G" >> "$GITHUB_ENV"
+          echo "CCACHE_COMPRESS=true" >> "$GITHUB_ENV"
+          ccache --zero-stats || true
 
       - name: Fetch v8 (${{ matrix.platform }} ${{ matrix.arch }})
         uses: ./Scripts/.github/actions/v8/fetch

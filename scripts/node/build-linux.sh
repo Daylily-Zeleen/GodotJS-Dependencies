@@ -25,8 +25,28 @@ fi
 cd node
 bash "$WORKSPACE/Scripts/scripts/node/apply_icu_profile.sh" "$PWD"
 python3 "$WORKSPACE/Scripts/scripts/node/patch_rtti.py" "$PWD" linux
+# Node only emits -fPIC for shared builds, so the static archive would otherwise
+# contain non-PIC objects and fail to link into the embedder's .so
+# (R_X86_64_TPOFF32 relocation errors).
+python3 "$WORKSPACE/Scripts/scripts/node/patch_pic.py" "$PWD" linux
+# libnode is linked into a shared library (Godot GDExtension). v8's default
+# thread-local model for a static build ("local-exec" on linux/macos) emits
+# R_X86_64_TPOFF32-type relocations against hidden symbols such as
+# v8::internal::g_current_isolate_, which a shared object cannot use; selecting
+# v8's library mode routes the access through a getter instead.
+python3 "$WORKSPACE/Scripts/scripts/node/patch_tls.py" "$PWD" linux
 export CC=gcc-12
 export CXX=g++-12
+# Route the compilers through ccache when available. The CI job restores
+# CCACHE_DIR, so an unchanged node source reuses almost every object: the
+# windows leg spends ~51 of its 52 minutes compiling, and the unix legs are
+# dominated by the same work. gyp's make generator only honours CC/CXX, so the
+# wrapper has to live in the compiler command itself.
+if command -v ccache >/dev/null 2>&1; then
+  export CC="ccache $CC"
+  export CXX="ccache $CXX"
+  echo "ccache enabled for the linux node build ($CC)"
+fi
 ./configure \
   --dest-cpu=x64 \
   --with-intl=small-icu \
@@ -35,6 +55,14 @@ export CXX=g++-12
   --without-inspector \
   --without-report
 python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_config.py" config.gypi
+# node only WARNS when its OpenSSL header probe fails, then gyp silently drops
+# deps/ncrypto's engine backend and the build breaks much later on undeclared
+# ENGINE_* symbols. Treat that degraded configuration as fatal here instead.
+python3 "$WORKSPACE/Scripts/scripts/node/verify_openssl_config.py" config.gypi
+# Assert the patch above actually took effect in the fetched tree: the probe
+# preprocesses v8's real header, so a dropped define fails here in seconds
+# instead of after the v8 compile and a whole-archive link attempt.
+python3 "$WORKSPACE/Scripts/scripts/node/verify_tls_config.py" "$PWD" linux
 make -j"$(nproc)"
 python3 "$WORKSPACE/Scripts/scripts/node/verify_icu_data.py" out
 
